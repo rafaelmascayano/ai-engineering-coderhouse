@@ -104,6 +104,25 @@ El script pregunta «¿Qué es la entropía?» dos veces:
 Los errores de conexión, autenticación, cuota o rate limit se presentan de forma
 controlada. Cada modalidad también está protegida por el timeout configurado.
 
+## Calidad de código con pre-commit
+
+La configuración ubicada en la raíz del repositorio ejecuta `ruff check --fix` y
+`ruff format` sobre los archivos Python de este módulo antes de cada commit.
+
+Instala los hooks una vez, desde la raíz del repositorio:
+
+```bash
+pre-commit install
+```
+
+También puedes comprobar todos los archivos manualmente:
+
+```bash
+pre-commit run --all-files
+```
+
+Si Ruff modifica algún archivo, revísalo y vuelve a agregarlo al commit.
+
 ## Estructura
 
 ```text

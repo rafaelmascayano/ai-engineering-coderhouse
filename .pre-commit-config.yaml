@@ -1,0 +1,11 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.2
+    hooks:
+      - id: ruff-check
+        name: ruff check (module 1)
+        args: [--fix]
+        files: ^task/module\ 1/.*\.py$
+      - id: ruff-format
+        name: ruff format (module 1)
+        files: ^task/module\ 1/.*\.py$

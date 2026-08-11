@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 
-from llm_clients.config import Configuration
 from schemas import ChatMessage, ModelResponse
+
+from llm_clients.config import Configuration
 
 
 class BaseLLMClient(ABC):

@@ -3,10 +3,10 @@ from collections.abc import AsyncGenerator
 
 from anthropic import APIError as AnthropicAPIError
 from anthropic import AsyncAnthropic
+from schemas import ChatMessage, ModelResponse
 
 from llm_clients.base import BaseLLMClient
 from llm_clients.config import Configuration
-from schemas import ChatMessage, ModelResponse
 
 
 class AnthropicClient(BaseLLMClient):
