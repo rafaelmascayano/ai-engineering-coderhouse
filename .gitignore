@@ -1,2 +1,12 @@
-# Local environment files
-class/module 2/.enviroment
+# Secrets
+.env
+
+# Virtual environments
+.venv/
+venv/
+
+# Python and tool caches
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/

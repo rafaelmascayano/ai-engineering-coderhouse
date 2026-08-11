@@ -1,6 +1,7 @@
 import pytest
-from llm_clients.config import Configuration, EnvironmentLoader, Provider
 from pydantic import ValidationError
+
+from llm_clients.config import Configuration, EnvironmentLoader, Provider
 
 
 def test_environment_loader_reads_all_values(monkeypatch: pytest.MonkeyPatch) -> None:

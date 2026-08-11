@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+
 from llm_clients.base import BaseLLMClient
 from llm_clients.config import Configuration, Provider
 from llm_clients.factory import LLMFactory
