@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class Providers(str, Enum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
+    OPENROUTER = "openrouter"
 
 
 class Configuration(BaseModel):
@@ -24,18 +25,29 @@ class LoadEnvironment:
 
     def get_configuration(self) -> Configuration:
         provider_str = os.getenv("PROVIDER", "openai").lower()
-        model_name = os.getenv("MODEL_NAME", "gpt-4o")
         timeout = int(os.getenv("TIMEOUT", "30"))
+        max_tokens = int(os.getenv("MAX_TOKENS", "1000"))
+        temperature = float(os.getenv("TEMPERATURE", "0.7"))
 
         try:
             provider = Providers(provider_str)
         except ValueError:
             raise ValueError(
-                f"Invalid PROVIDER in .env: '{provider_str}'. Must be 'anthropic' or 'openai'"
+                f"Invalid PROVIDER in .env: '{provider_str}'. "
+                "Must be 'anthropic', 'openai' or 'openrouter'"
             )
+
+        default_models = {
+            Providers.ANTHROPIC: "claude-3-5-haiku-latest",
+            Providers.OPENAI: "gpt-4o-mini",
+            Providers.OPENROUTER: "openrouter/free",
+        }
+        model_name = os.getenv("MODEL_NAME", default_models[provider])
 
         return Configuration(
             provider=provider,
             model_name=model_name,
             timeout=timeout,
+            max_tokens=max_tokens,
+            temperature=temperature,
         )

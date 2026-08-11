@@ -130,6 +130,18 @@ class OpenAIClient(AsyncLLMManager):
             yield self._stream_error(error)
 
 
+class OpenRouterClient(OpenAIClient):
+    def __init__(self, config: Configuration):
+        AsyncLLMManager.__init__(self, config)
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            raise ValueError("OPENROUTER_API_KEY environment variable is missing")
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+
 class LLMFactory:
     @staticmethod
     def create_client(config: Configuration) -> AsyncLLMManager:
@@ -137,5 +149,7 @@ class LLMFactory:
             return AnthropicClient(config)
         elif config.provider == Providers.OPENAI:
             return OpenAIClient(config)
+        elif config.provider == Providers.OPENROUTER:
+            return OpenRouterClient(config)
         else:
             raise ValueError(f"Unsupported provider: {config.provider}")

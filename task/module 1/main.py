@@ -11,7 +11,7 @@ async def main():
     load_environment = LoadEnvironment()
     config = load_environment.get_configuration()
     client = LLMFactory.create_client(config)
-    messages = [ChatMessage(role="user", content="¿Qué es la entropía?")]
+    messages = [ChatMessage(role="user", content="¿Qué sabe de la vida?")]
 
     try:
         async with asyncio.timeout(int(config.timeout)):
