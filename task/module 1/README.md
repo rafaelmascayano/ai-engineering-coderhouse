@@ -108,10 +108,16 @@ controlada. Cada modalidad también está protegida por el timeout configurado.
 
 ```text
 .
-├── AsyncLLManager.py       # Interfaz, clientes async y fábrica de proveedores
-├── ConfigurationManager.py # Configuración validada y carga del entorno
-├── schemas.py              # Mensajes y respuestas validados con Pydantic
-├── main.py                 # Prueba normal y por streaming
-├── requirements.txt        # Dependencias fijadas
-└── .env.example            # Plantilla de variables de entorno
+├── llm_clients/
+│   ├── __init__.py             # API pública del paquete
+│   ├── base.py                 # Interfaz abstracta común
+│   ├── config.py               # Configuración y carga del entorno
+│   ├── factory.py              # Selección del proveedor
+│   ├── anthropic_client.py     # Cliente asíncrono de Anthropic
+│   ├── openai_client.py        # Cliente asíncrono de OpenAI
+│   └── openrouter_client.py    # Cliente asíncrono de OpenRouter
+├── schemas.py                  # Mensajes y respuestas Pydantic
+├── main.py                     # Prueba normal y por streaming
+├── requirements.txt            # Dependencias fijadas
+└── .env.example                # Plantilla de variables de entorno
 ```

@@ -2,13 +2,12 @@ import asyncio
 from collections.abc import AsyncGenerator
 from typing import cast
 
-from AsyncLLManager import LLMFactory
-from ConfigurationManager import LoadEnvironment
+from llm_clients import EnvironmentLoader, LLMFactory
 from schemas import ChatMessage, ModelResponse
 
 
 async def main():
-    load_environment = LoadEnvironment()
+    load_environment = EnvironmentLoader()
     config = load_environment.get_configuration()
     client = LLMFactory.create_client(config)
     messages = [ChatMessage(role="user", content="¿Qué sabe de la vida?")]
