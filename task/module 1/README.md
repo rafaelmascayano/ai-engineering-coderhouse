@@ -123,6 +123,18 @@ pre-commit run --all-files
 
 Si Ruff modifica algún archivo, revísalo y vuelve a agregarlo al commit.
 
+## Tests unitarios
+
+La suite usa clientes simulados y no realiza solicitudes externas ni consume
+créditos. Desde el directorio del módulo, ejecútala con:
+
+```bash
+pytest
+```
+
+Los tests cubren esquemas, configuración, fábrica, generación normal, streaming
+y configuración del endpoint de OpenRouter.
+
 ## Estructura
 
 ```text
@@ -137,6 +149,7 @@ Si Ruff modifica algún archivo, revísalo y vuelve a agregarlo al commit.
 │   └── openrouter_client.py    # Cliente asíncrono de OpenRouter
 ├── schemas.py                  # Mensajes y respuestas Pydantic
 ├── main.py                     # Prueba normal y por streaming
+├── tests/                      # Tests unitarios sin llamadas externas
 ├── requirements.txt            # Dependencias fijadas
 └── .env.example                # Plantilla de variables de entorno
 ```
