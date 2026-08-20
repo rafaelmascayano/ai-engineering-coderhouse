@@ -36,6 +36,8 @@ hayan sido devueltas por el retriever.
 ├── rag_chain.py           # retriever y cadena LCEL asíncrona
 ├── rag_config.py          # configuración compartida
 ├── demo_rag.py            # consulta real y pregunta trampa
+├── main.py                # entrega asíncrona preservada del Módulo 2
+├── module1_demo.py        # clientes LLM preservados del Módulo 1
 ├── schemas.py             # RAGResponse y referencias validadas con Pydantic
 ├── tests/test_rag.py      # pruebas sin red ni consumo de API
 ├── requirements.txt

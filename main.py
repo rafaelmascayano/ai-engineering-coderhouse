@@ -1,41 +1,24 @@
 import asyncio
-from collections.abc import AsyncGenerator
-from typing import cast
+import logging
 
-from llm_clients import EnvironmentLoader, LLMFactory
-from schemas import ChatMessage, ModelResponse
+from chain import process_text
+
+SAMPLE_TEXT = """
+Una API construida con FastAPI usa Redis como caché y PostgreSQL para
+persistencia. Durante picos de tráfico, el pool de conexiones se agota y las
+solicitudes terminan con timeout, dejando el servicio fuera de línea.
+""".strip()
 
 
-async def main():
-    load_environment = EnvironmentLoader()
-    config = load_environment.get_configuration()
-    client = LLMFactory.create_client(config)
-    messages = [ChatMessage(role="user", content="¿Qué sabe de la vida?")]
-
-    try:
-        async with asyncio.timeout(int(config.timeout)):
-            print("Respuesta normal:")
-            response = cast(
-                ModelResponse,
-                await client.chat_completion(messages),
-            )
-            if response.error:
-                print(f"Error controlado: {response.error}")
-            else:
-                print(response.content)
-
-        print("\nRespuesta en streaming:")
-        async with asyncio.timeout(int(config.timeout)):
-            stream = cast(
-                AsyncGenerator[str, None],
-                await client.chat_completion(messages, stream=True),
-            )
-            async for token in stream:
-                print(token, end="", flush=True)
-            print()
-    except TimeoutError as e:
-        print(f"La solicitud superó el límite de {config.timeout} segundos: {e}")
+async def main() -> None:
+    """Ejecuta el pipeline correspondiente a la pre-entrega 2."""
+    result = await process_text(SAMPLE_TEXT)
+    print(result.model_dump_json(indent=2))
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
     asyncio.run(main())
