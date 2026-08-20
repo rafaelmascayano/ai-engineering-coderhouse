@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from langchain_openai import OpenAIEmbeddings
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 @dataclass(frozen=True)
@@ -25,10 +27,11 @@ class RAGSettings:
     def from_env(cls, *, require_api_key: bool = True) -> RAGSettings:
         load_dotenv(PROJECT_ROOT / ".env")
 
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
         if require_api_key and not api_key:
             raise ValueError(
-                "Falta OPENAI_API_KEY. Copia .env.example a .env y configura la clave."
+                "Falta OPENROUTER_API_KEY. Copia .env.example a .env y configura "
+                "la clave."
             )
 
         top_k = int(os.getenv("RAG_TOP_K", "4"))
@@ -41,8 +44,21 @@ class RAGSettings:
                 os.getenv("RAG_VECTORSTORE_DIR", PROJECT_ROOT / "vectorstore")
             ),
             collection_name=os.getenv("RAG_COLLECTION", "ley_21442"),
-            embedding_model=os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-small"),
-            chat_model=os.getenv("RAG_CHAT_MODEL", "gpt-4o-mini"),
+            embedding_model=os.getenv(
+                "RAG_EMBEDDING_MODEL", "openai/text-embedding-3-small"
+            ),
+            chat_model=os.getenv("RAG_CHAT_MODEL", "openrouter/free"),
             top_k=top_k,
             api_key=api_key,
         )
+
+
+def create_embeddings(settings: RAGSettings) -> OpenAIEmbeddings:
+    """Crea embeddings OpenAI-compatible a través de OpenRouter."""
+
+    return OpenAIEmbeddings(
+        model=settings.embedding_model,
+        api_key=settings.api_key,
+        base_url=OPENROUTER_BASE_URL,
+        tiktoken_model_name="text-embedding-3-small",
+    )

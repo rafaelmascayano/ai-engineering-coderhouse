@@ -10,7 +10,7 @@ preguntas utilizando exclusivamente los fragmentos recuperados.
 ```text
 data/*.txt
   -> RecursiveCharacterTextSplitter (600 tokens, overlap 50)
-  -> OpenAIEmbeddings (text-embedding-3-small)
+  -> OpenAIEmbeddings vía OpenRouter (openai/text-embedding-3-small)
   -> ChromaDB persistente (./vectorstore)
   -> retriever top_k=4
   -> prompt grounded + ChatOpenAI
@@ -53,7 +53,7 @@ conservan y continúan cubiertos por la suite original.
 ## Requisitos
 
 - Python 3.12 o superior
-- Una API key de OpenAI para crear embeddings y ejecutar consultas reales
+- Una API key de OpenRouter para crear embeddings y ejecutar consultas reales
 
 ## Instalación
 
@@ -74,9 +74,9 @@ En Windows PowerShell, activa el entorno con:
 Completa únicamente tu archivo local `.env`:
 
 ```dotenv
-OPENAI_API_KEY=tu_api_key
-RAG_CHAT_MODEL=gpt-4o-mini
-RAG_EMBEDDING_MODEL=text-embedding-3-small
+OPENROUTER_API_KEY=tu_api_key
+RAG_CHAT_MODEL=openrouter/free
+RAG_EMBEDDING_MODEL=openai/text-embedding-3-small
 RAG_COLLECTION=ley_21442
 RAG_DATA_DIR=./data
 RAG_VECTORSTORE_DIR=./vectorstore

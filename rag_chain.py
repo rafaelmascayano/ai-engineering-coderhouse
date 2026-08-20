@@ -14,10 +14,14 @@ from langchain_core.runnables import (
     RunnableParallel,
     RunnablePassthrough,
 )
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
 
 from ingest import MANIFEST_FILENAME
-from rag_config import RAGSettings
+from rag_config import (
+    OPENROUTER_BASE_URL,
+    RAGSettings,
+    create_embeddings,
+)
 from schemas import RAGResponse
 
 SYSTEM_PROMPT = """
@@ -82,10 +86,7 @@ def create_retriever(settings: RAGSettings) -> Runnable[str, list[Document]]:
     """Abre Chroma con el mismo embedding usado durante la indexación."""
 
     _load_and_validate_manifest(settings)
-    embeddings = OpenAIEmbeddings(
-        model=settings.embedding_model,
-        api_key=settings.api_key,
-    )
+    embeddings = create_embeddings(settings)
     vectorstore = Chroma(
         collection_name=settings.collection_name,
         embedding_function=embeddings,
@@ -101,6 +102,7 @@ def create_chat_model(settings: RAGSettings) -> ChatOpenAI:
     return ChatOpenAI(
         model=settings.chat_model,
         api_key=settings.api_key,
+        base_url=OPENROUTER_BASE_URL,
         temperature=0,
         timeout=30,
         max_retries=2,

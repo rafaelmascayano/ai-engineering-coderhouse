@@ -18,8 +18,17 @@ from ingest import (
     load_source_documents,
     split_documents,
 )
-from rag_chain import GroundingError, build_rag_chain, get_rag_response
-from rag_config import RAGSettings
+from rag_chain import (
+    GroundingError,
+    build_rag_chain,
+    create_chat_model,
+    get_rag_response,
+)
+from rag_config import (
+    OPENROUTER_BASE_URL,
+    RAGSettings,
+    create_embeddings,
+)
 from schemas import RAGResponse
 
 
@@ -61,6 +70,25 @@ class CountingEmbeddings(Embeddings):
 
     def embed_query(self, text: str) -> list[float]:
         return [float(len(text) % 17), 1.0, 0.5]
+
+
+def test_rag_clients_use_openrouter_key_models_and_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("RAG_CHAT_MODEL", "openrouter/free")
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    settings = RAGSettings.from_env()
+
+    embeddings = create_embeddings(settings)
+    chat_model = create_chat_model(settings)
+
+    assert settings.api_key == "test-openrouter-key"
+    assert embeddings.model == "openai/text-embedding-3-small"
+    assert embeddings.openai_api_base == OPENROUTER_BASE_URL
+    assert embeddings.tiktoken_model_name == "text-embedding-3-small"
+    assert chat_model.model_name == "openrouter/free"
+    assert chat_model.openai_api_base == OPENROUTER_BASE_URL
 
 
 def test_grounded_question_returns_answer_and_retrieved_reference() -> None:

@@ -10,10 +10,9 @@ from typing import Any
 import chromadb
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from rag_config import RAGSettings
+from rag_config import RAGSettings, create_embeddings
 
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 50
@@ -179,10 +178,7 @@ def ingest_documents(
         client = chromadb.PersistentClient(path=str(settings.vectorstore_dir))
         client.delete_collection(settings.collection_name)
 
-    embedding_client = embeddings or OpenAIEmbeddings(
-        model=settings.embedding_model,
-        api_key=settings.api_key,
-    )
+    embedding_client = embeddings or create_embeddings(settings)
     vectorstore = Chroma(
         collection_name=settings.collection_name,
         embedding_function=embedding_client,
