@@ -45,7 +45,7 @@ class RAGSettings:
             ),
             collection_name=os.getenv("RAG_COLLECTION", "ley_21442"),
             embedding_model=os.getenv(
-                "RAG_EMBEDDING_MODEL", "openai/text-embedding-3-small"
+                "RAG_EMBEDDING_MODEL", "nvidia/nemotron-3-embed-1b:free"
             ),
             chat_model=os.getenv("RAG_CHAT_MODEL", "openrouter/free"),
             top_k=top_k,
@@ -60,5 +60,8 @@ def create_embeddings(settings: RAGSettings) -> OpenAIEmbeddings:
         model=settings.embedding_model,
         api_key=settings.api_key,
         base_url=OPENROUTER_BASE_URL,
-        tiktoken_model_name="text-embedding-3-small",
+        # Los modelos de OpenRouter no necesariamente usan el tokenizer de OpenAI.
+        # Los chunks ya están limitados a 600 tokens durante la ingesta.
+        check_embedding_ctx_length=False,
+        model_kwargs={"encoding_format": "float"},
     )

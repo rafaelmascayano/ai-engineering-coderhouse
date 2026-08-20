@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import chromadb
 import pytest
 import tiktoken
 from langchain_core.documents import Document
@@ -77,16 +78,17 @@ def test_rag_clients_use_openrouter_key_models_and_base_url(
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
     monkeypatch.setenv("RAG_CHAT_MODEL", "openrouter/free")
-    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "nvidia/nemotron-3-embed-1b:free")
     settings = RAGSettings.from_env()
 
     embeddings = create_embeddings(settings)
     chat_model = create_chat_model(settings)
 
     assert settings.api_key == "test-openrouter-key"
-    assert embeddings.model == "openai/text-embedding-3-small"
+    assert embeddings.model == "nvidia/nemotron-3-embed-1b:free"
     assert embeddings.openai_api_base == OPENROUTER_BASE_URL
-    assert embeddings.tiktoken_model_name == "text-embedding-3-small"
+    assert embeddings.check_embedding_ctx_length is False
+    assert embeddings.model_kwargs["encoding_format"] == "float"
     assert chat_model.model_name == "openrouter/free"
     assert chat_model.openai_api_base == OPENROUTER_BASE_URL
 
@@ -222,6 +224,10 @@ def test_ingestion_persists_and_skips_unchanged_sources(
         api_key="",
     )
     embeddings = CountingEmbeddings()
+    # Simula la colección vacía que queda si el proveedor falla durante la ingesta.
+    chromadb.PersistentClient(
+        path=str(settings.vectorstore_dir)
+    ).get_or_create_collection(settings.collection_name)
 
     first_count = ingest_documents(settings, embeddings=embeddings)
     calls_after_first_ingestion = embeddings.document_calls

@@ -10,7 +10,7 @@ preguntas utilizando exclusivamente los fragmentos recuperados.
 ```text
 data/*.txt
   -> RecursiveCharacterTextSplitter (600 tokens, overlap 50)
-  -> OpenAIEmbeddings vía OpenRouter (openai/text-embedding-3-small)
+  -> OpenAIEmbeddings vía OpenRouter (Nemotron 3 Embed gratuito)
   -> ChromaDB persistente (./vectorstore)
   -> retriever top_k=4
   -> prompt grounded + ChatOpenAI
@@ -76,7 +76,7 @@ Completa únicamente tu archivo local `.env`:
 ```dotenv
 OPENROUTER_API_KEY=tu_api_key
 RAG_CHAT_MODEL=openrouter/free
-RAG_EMBEDDING_MODEL=openai/text-embedding-3-small
+RAG_EMBEDDING_MODEL=nvidia/nemotron-3-embed-1b:free
 RAG_COLLECTION=ley_21442
 RAG_DATA_DIR=./data
 RAG_VECTORSTORE_DIR=./vectorstore

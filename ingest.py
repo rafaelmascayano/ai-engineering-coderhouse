@@ -11,6 +11,7 @@ import chromadb
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from openai import APIStatusError
 
 from rag_config import RAGSettings, create_embeddings
 
@@ -163,7 +164,7 @@ def ingest_documents(
     ):
         return collection_count
 
-    if collection_count is not None and not force:
+    if collection_count not in (None, 0) and not force:
         raise RuntimeError(
             "La colección existe pero no coincide con los documentos actuales. "
             "Ejecuta `python ingest.py --force` para reconstruirla."
@@ -204,7 +205,16 @@ def main() -> None:
     )
     args = parser.parse_args()
     settings = RAGSettings.from_env()
-    count = ingest_documents(settings, force=args.force)
+    try:
+        count = ingest_documents(settings, force=args.force)
+    except APIStatusError as error:
+        if error.status_code == 402:
+            raise SystemExit(
+                "OpenRouter rechazó la ingesta por falta de créditos. Usa el "
+                "modelo gratuito `nvidia/nemotron-3-embed-1b:free` en "
+                "RAG_EMBEDDING_MODEL o agrega créditos a la cuenta."
+            ) from error
+        raise
     print(
         f"Colección '{settings.collection_name}' lista: {count} chunks en "
         f"{settings.vectorstore_dir}"
