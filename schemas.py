@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -20,7 +20,7 @@ class ModelResponse(BaseModel):
     error: str | None = None
 
 
-class NivelCriticidad(str, Enum):
+class NivelCriticidad(StrEnum):
     BAJA = "baja"
     MEDIA = "media"
     ALTA = "alta"

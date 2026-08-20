@@ -1,0 +1,19 @@
+[project]
+name = "ai-engineering-coderhouse"
+version = "0.5.0"
+description = "Entregas acumulativas de AI Engineering, incluido un agente cíclico persistente."
+requires-python = ">=3.12"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["cyclic_agent"]
+strict = true
+warn_unreachable = true
+show_error_codes = true

@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class Provider(str, Enum):
+class Provider(StrEnum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     OPENROUTER = "openrouter"

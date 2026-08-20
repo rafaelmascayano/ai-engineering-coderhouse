@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "thread_id": "demo-multi-step-102",
+  "prompt": "¿Cuántos pedidos tuvo el cliente 102, cuál fue el total y cuál fue el último?",
+  "note": "Traza observable de mensajes, llamadas y resultados; no contiene cadena de pensamiento privada.",
+  "events": [
+    {
+      "sequence": 1,
+      "node": "model",
+      "message_type": "ai",
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "buscar_resumen_pedidos",
+          "args": {
+            "cliente_id": 102
+          },
+          "id": "call_summary_102"
+        }
+      ]
+    },
+    {
+      "sequence": 2,
+      "node": "tools",
+      "message_type": "tool",
+      "content": "{\"status\": \"ok\", \"cliente_id\": 102, \"pedidos\": 3, \"total\": 14500}",
+      "tool_call_id": "call_summary_102",
+      "tool_name": "buscar_resumen_pedidos",
+      "status": "success"
+    },
+    {
+      "sequence": 3,
+      "node": "model",
+      "message_type": "ai",
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "buscar_ultimo_pedido",
+          "args": {
+            "cliente_id": 102
+          },
+          "id": "call_latest_102"
+        }
+      ]
+    },
+    {
+      "sequence": 4,
+      "node": "tools",
+      "message_type": "tool",
+      "content": "{\"status\": \"ok\", \"cliente_id\": 102, \"pedido_id\": 5015, \"fecha\": \"2026-08-03\", \"total\": 6500, \"estado\": \"en preparación\"}",
+      "tool_call_id": "call_latest_102",
+      "tool_name": "buscar_ultimo_pedido",
+      "status": "success"
+    },
+    {
+      "sequence": 5,
+      "node": "model",
+      "message_type": "ai",
+      "content": "El cliente 102 tuvo 3 pedidos por un total de $14.500. El último fue el pedido 5015, del 2026-08-03, por $6.500 y está en preparación."
+    }
+  ]
+}

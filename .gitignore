@@ -13,3 +13,11 @@ __pycache__/
 
 # Vector database generated locally
 vectorstore/
+
+# LangGraph checkpoints and generated traces
+checkpoints/
+*.sqlite
+*.sqlite3-shm
+*.sqlite3-wal
+traces/*.json
+!examples/react_trace.json
