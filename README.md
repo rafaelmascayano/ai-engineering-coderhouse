@@ -1,208 +1,194 @@
-# Pre-entrega 2: pipeline de extracción técnica
+# RAG asíncrono con LangChain y ChromaDB
 
-Esta rama contiene la entrega del Módulo 2. El código del Módulo 1 se conserva
-como base reutilizable, pero el punto de entrada principal corresponde al
-pipeline de extracción técnica.
+Flujo End-to-End de Retrieval-Augmented Generation (RAG) sobre la Ley chilena
+N.º 21.442 de Copropiedad Inmobiliaria. El proyecto ingiere documentos locales,
+los fragmenta por tokens, persiste sus embeddings en ChromaDB y responde
+preguntas utilizando exclusivamente los fragmentos recuperados.
 
-## Evaluación rápida
-
-Archivos requeridos por la consigna:
-
-- `schemas.py`: contrato Pydantic `ExtraccionTecnica`.
-- `chain.py`: prompt, salida estructurada, LCEL y reintento.
-- `main.py`: mini-script asíncrono ejecutable.
-
-Después de configurar `.env`, la entrega se ejecuta con:
-
-```bash
-python main.py
-```
-
-Las pruebas específicas y la suite completa se ejecutan con:
-
-```bash
-pytest tests/test_chain.py tests/test_schemas.py -q
-pytest -q
-```
-
-## Funcionamiento
-
-El pipeline recibe una descripción de arquitectura, incidente o log de error y
-devuelve una instancia de `ExtraccionTecnica` con este contrato:
-
-- `tecnologias`: lista no vacía de tecnologías mencionadas en el texto.
-- `nivel_de_criticidad`: `baja`, `media` o `alta`.
-- `resumen_tecnico`: resumen no vacío, breve y factual.
-
-El esquema rechaza strings vacíos y campos adicionales.
-
-### Arquitectura
-
-La cadena se compone con LangChain Expression Language (LCEL):
+## Arquitectura
 
 ```text
-ChatPromptTemplate
-    | ChatOpenAI.with_structured_output(ExtraccionTecnica)
-    | validación de metadatos y objeto Pydantic
-    | with_retry(stop_after_attempt=2)
+data/*.txt
+  -> RecursiveCharacterTextSplitter (600 tokens, overlap 50)
+  -> OpenAIEmbeddings vía OpenRouter (Nemotron 3 Embed gratuito)
+  -> ChromaDB persistente (./vectorstore)
+  -> retriever top_k=4
+  -> prompt grounded + ChatOpenAI
+  -> PydanticOutputParser(RAGResponse)
 ```
 
-`ChatOpenAI` se conecta al endpoint compatible de OpenRouter. La salida usa
-JSON Schema estricto y conserva el mensaje crudo para revisar `finish_reason`
-antes de aceptar el objeto parseado.
+La cadena se compone con LangChain Expression Language (LCEL). El prompt trata
+los documentos como datos no confiables, ignora instrucciones incluidas en
+ellos y obliga al modelo a devolver `"No lo sé"` cuando el contexto recuperado
+no contiene la respuesta. Una validación posterior rechaza referencias que no
+hayan sido devueltas por el retriever.
 
-Como `openrouter/free` puede elegir modelos donde el razonamiento es obligatorio,
-la solicitud usa esfuerzo `minimal` y omite `temperature`. El pipeline reserva
-como mínimo 2048 tokens de salida para dejar espacio tanto al razonamiento como
-al JSON final.
+## Contenido del repositorio
 
-Si la respuesta está truncada, el SDK lanza `LengthFinishReasonError`, contiene
-JSON inválido o no produce el modelo Pydantic esperado, la cadena convierte el
-problema a `StructuredOutputError` y realiza un reintento automático. Después de
-dos intentos fallidos propaga el error validado.
+```text
+.
+├── data/
+│   ├── 01_regimen_obligaciones_reglamento.txt
+│   ├── 02_administracion_condominio.txt
+│   ├── 03_uso_gastos_seguridad.txt
+│   └── 04_conflictos_registro_sanciones.txt
+├── ingest.py              # carga, limpieza, chunking e indexación persistente
+├── rag_chain.py           # retriever y cadena LCEL asíncrona
+├── rag_config.py          # configuración compartida
+├── demo_rag.py            # consulta real y pregunta trampa
+├── main.py                # entrega asíncrona preservada del Módulo 2
+├── module1_demo.py        # clientes LLM preservados del Módulo 1
+├── schemas.py             # RAGResponse y referencias validadas con Pydantic
+├── tests/test_rag.py      # pruebas sin red ni consumo de API
+├── requirements.txt
+└── .env.example
+```
 
-### Ejecución del ejemplo asíncrono
+El dataset proviene del PDF oficial de la Biblioteca del Congreso Nacional de
+Chile, versión generada el 20 de agosto de 2026. Se dividió en cuatro archivos
+por bloques temáticos/páginas. El ingestor elimina los encabezados y pies de
+página repetidos antes de fragmentar.
 
-Configura `.env` y ejecuta:
+Los módulos de clientes LLM y extracción técnica de las entregas anteriores se
+conservan y continúan cubiertos por la suite original.
+
+## Requisitos
+
+- Python 3.12 o superior
+- Una API key de OpenRouter para crear embeddings y ejecutar consultas reales
+
+## Instalación
 
 ```bash
-python main.py
-```
-
-El script utiliza `asyncio.run()`, llama a `process_text()` mediante `.ainvoke()`
-y muestra el resultado con `model_dump_json(indent=2)`.
-
-Ejemplo de salida:
-
-```json
-{
-  "tecnologias": [
-    "FastAPI",
-    "Redis",
-    "PostgreSQL"
-  ],
-  "nivel_de_criticidad": "alta",
-  "resumen_tecnico": "API con caché en Redis y persistencia en PostgreSQL; el agotamiento de conexiones deja el servicio fuera de línea."
-}
-```
-
-También se puede importar la función directamente:
-
-```python
-import asyncio
-
-from chain import process_text
-
-
-async def main() -> None:
-    result = await process_text(
-        "FastAPI usa Redis y PostgreSQL; el pool de conexiones se agotó."
-    )
-    print(result.model_dump())
-
-
-asyncio.run(main())
-```
-
-Los logs informan el inicio del procesamiento, cada intento, la validación, las
-respuestas incompletas y el agotamiento de reintentos. No registran el texto de
-entrada ni la API key.
-
-## Requisitos e instalación
-
-- Python 3.12
-- Una API key de OpenRouter para ejecutar el pipeline real
-
-```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+cp .env.example .env
 ```
 
-En Windows PowerShell:
+En Windows PowerShell, activa el entorno con:
 
 ```powershell
 .venv\Scripts\Activate.ps1
 ```
 
-## Configuración
-
-Copia la plantilla y completa la clave correspondiente:
-
-```bash
-cp .env.example .env
-```
-
-Configuración recomendada para la pre-entrega 2:
+Completa únicamente tu archivo local `.env`:
 
 ```dotenv
-PROVIDER=openrouter
 OPENROUTER_API_KEY=tu_api_key
-MODEL_NAME=openrouter/free
-TEMPERATURE=0.0
-MAX_TOKENS=2048
-TIMEOUT=30
+RAG_CHAT_MODEL=openrouter/free
+RAG_EMBEDDING_MODEL=nvidia/nemotron-3-embed-1b:free
+RAG_COLLECTION=ley_21442
+RAG_DATA_DIR=./data
+RAG_VECTORSTORE_DIR=./vectorstore
+RAG_TOP_K=4
 ```
 
-| Variable | Descripción |
-| --- | --- |
-| `PROVIDER` | Proveedor seleccionado; el pipeline requiere `openrouter` |
-| `OPENROUTER_API_KEY` | Clave de OpenRouter, nunca debe subirse al repositorio |
-| `MODEL_NAME` | Modelo o router; por defecto `openrouter/free` |
-| `TEMPERATURE` | Usada por el Módulo 1; el pipeline la omite por compatibilidad |
-| `MAX_TOKENS` | Máximo de salida; el pipeline aplica un mínimo de `2048` |
-| `TIMEOUT` | Timeout de cada solicitud en segundos |
+`.env` y `vectorstore/` están excluidos de Git. No subas llaves ni la base
+vectorial generada localmente.
 
-`openrouter/free` selecciona modelos gratuitos disponibles y filtra según las
-capacidades solicitadas, como Structured Outputs. Su disponibilidad y rate
-limits pueden variar. Consulta la
-[documentación de Structured Outputs de OpenRouter](https://openrouter.ai/docs/guides/features/structured-outputs).
+## 1. Ingesta
 
-El archivo `.env` está excluido de Git. Nunca publiques claves reales.
-
-## Entrega del Módulo 1
-
-El ejemplo anterior de clientes asíncronos se conserva. Ejecuta:
+Ejecuta una vez:
 
 ```bash
-python module1_demo.py
+python ingest.py
 ```
 
-`module1_demo.py` muestra una respuesta normal y otra en streaming usando el
-proveedor definido en `PROVIDER`. Los clientes soportados son OpenAI, Anthropic
-y OpenRouter, con manejo controlado de errores y timeout.
+El comando carga todos los `.txt` y `.md` de `data/`, crea chunks de 600 tokens
+con 50 tokens de solapamiento y los guarda en `./vectorstore`.
 
-## Tests y calidad
+El manifiesto local registra el hash de las fuentes, el modelo de embeddings y
+la configuración de chunking. Si todo coincide, una segunda ejecución reutiliza
+el índice y no vuelve a consumir la API. Si cambian las fuentes o el modelo,
+reconstruye explícitamente la colección:
 
-La suite usa clientes simulados: no realiza llamadas externas ni consume
-créditos.
+```bash
+python ingest.py --force
+```
+
+El mismo `RAG_EMBEDDING_MODEL` se usa al indexar y al consultar. La cadena se
+detiene con un error claro si el manifiesto indica un modelo distinto.
+
+## 2. Consultas asíncronas
+
+Ejecuta los dos casos requeridos (uno respondible y uno fuera del dataset):
+
+```bash
+python demo_rag.py
+```
+
+También puedes enviar una sola pregunta:
+
+```bash
+python demo_rag.py "¿Cuáles son los órganos de administración de un condominio?"
+```
+
+Uso desde Python:
+
+```python
+import asyncio
+
+from rag_chain import get_rag_response
+
+
+async def main() -> None:
+    result = await get_rag_response(
+        "¿Cuáles son los órganos de administración de un condominio?"
+    )
+    print(result.model_dump_json(indent=2))
+
+
+asyncio.run(main())
+```
+
+Contrato de salida:
+
+```json
+{
+  "answer": "Respuesta basada únicamente en el contexto.",
+  "references": [
+    {
+      "source": "02_administracion_condominio.txt",
+      "chunk_id": "02_administracion_condominio.txt#chunk-001"
+    }
+  ]
+}
+```
+
+Para una pregunta ajena a los documentos, la salida esperada es:
+
+```json
+{
+  "answer": "No lo sé",
+  "references": []
+}
+```
+
+## Pruebas
+
+La suite usa retrievers y modelos simulados: no necesita una API key, no accede
+a internet y no consume créditos.
 
 ```bash
 pytest
 ```
 
-Las pruebas cubren los esquemas, los clientes del Módulo 1, la composición LCEL,
-el uso de JSON Schema estricto, la llamada asíncrona y la recuperación ante JSON
-mal formado o respuestas truncadas.
+Las pruebas del RAG verifican:
 
-Para ejecutar Ruff mediante pre-commit:
+- una pregunta cuya respuesta está en el contexto;
+- una pregunta trampa que debe devolver exactamente `"No lo sé"`;
+- rechazo de referencias inventadas;
+- validación de consultas vacías;
+- limpieza, chunking y metadatos de los documentos.
 
-```bash
-pre-commit install
-pre-commit run --all-files
-```
+## Decisiones de seguridad y calidad
 
-## Estructura principal
-
-```text
-.
-├── chain.py                    # Prompt, LCEL, salida estructurada y reintento
-├── schemas.py                  # Contratos Pydantic de ambos módulos
-├── main.py                     # Entry point asíncrono de la pre-entrega 2
-├── module1_demo.py             # Ejemplo preservado del Módulo 1
-├── llm_clients/                # Clientes OpenAI, Anthropic y OpenRouter
-├── tests/                      # Tests unitarios sin llamadas externas
-├── requirements.txt            # Dependencias del proyecto
-└── .env.example                # Plantilla de configuración sin secretos
-```
+- `top_k` está restringido a 3-5 para evitar contexto excesivo y *Lost in the
+  Middle*;
+- indexación y consulta comparten el mismo modelo de embeddings;
+- la base vectorial se persiste y reutiliza mediante un manifiesto;
+- el prompt prohíbe conocimiento externo y trata el contexto como datos;
+- `PydanticOutputParser` exige una salida estructurada;
+- cada referencia se contrasta con los chunks recuperados antes de devolverla.
