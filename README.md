@@ -1,63 +1,212 @@
-# RAG asíncrono con LangChain y ChromaDB
+# AI Engineering: entrega acumulativa — Módulos 1 a 4
 
-Flujo End-to-End de Retrieval-Augmented Generation (RAG) sobre la Ley chilena
-N.º 21.442 de Copropiedad Inmobiliaria. El proyecto ingiere documentos locales,
-los fragmenta por tokens, persiste sus embeddings en ChromaDB y responde
-preguntas utilizando exclusivamente los fragmentos recuperados.
+Este repositorio reúne las cuatro pre-entregas del curso en una evolución
+progresiva: comienza con clientes LLM intercambiables, agrega procesamiento
+estructurado con LangChain, construye un RAG local y finalmente migra la
+recuperación a Pinecone Serverless con búsqueda híbrida y métricas.
 
-## Arquitectura
+El corpus de los módulos 3 y 4 es la Ley chilena N.º 21.442 de Copropiedad
+Inmobiliaria, organizada en cuatro documentos temáticos dentro de `data/`.
+
+## Resumen de los cuatro módulos
+
+| Módulo | Objetivo | Implementación principal | Ejecución |
+| --- | --- | --- | --- |
+| 1 | Abstraer el acceso a distintos proveedores LLM | Clientes asíncronos para OpenAI, Anthropic y OpenRouter, Factory y streaming | `python module1_demo.py` |
+| 2 | Transformar texto libre en datos validados | Cadena LCEL, salida estructurada Pydantic, reintentos y logging | `python main.py` |
+| 3 | Construir un RAG local completo | Ingesta, ChromaDB persistente, recuperación, generación grounded y referencias | `python ingest.py` y `python demo_rag.py` |
+| 4 | Escalar y evaluar la recuperación | Pinecone Serverless, namespaces, BM25 + vectores y Precision@5/Recall@5 | `python init_pinecone.py`, `python ingest_pinecone.py` y `python evaluate.py` |
+
+```text
+Módulo 1              Módulo 2              Módulo 3              Módulo 4
+clientes LLM  ──────> extracción LCEL ────> RAG local ──────────> RAG cloud
+Factory + async        JSON validado         ChromaDB               Pinecone
+streaming              reintentos            respuesta grounded     BM25 + vector
+```
+
+## Módulo 1 — Clientes LLM multi-proveedor
+
+El primer módulo crea una interfaz común para conversar con distintos
+proveedores sin acoplar la aplicación a un SDK concreto.
+
+Componentes:
+
+- `llm_clients/base.py`: contrato abstracto compartido;
+- `llm_clients/openai_client.py`: cliente asíncrono de OpenAI;
+- `llm_clients/anthropic_client.py`: cliente asíncrono de Anthropic;
+- `llm_clients/openrouter_client.py`: cliente OpenAI-compatible de OpenRouter;
+- `llm_clients/factory.py`: selecciona el cliente mediante `LLMFactory`;
+- `llm_clients/config.py`: valida proveedor, modelo, timeout, tokens y
+  temperatura desde `.env`;
+- `module1_demo.py`: demuestra respuesta normal y streaming token a token.
+
+El proveedor se cambia sin modificar código:
+
+```dotenv
+PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-v1-...
+MODEL_NAME=openrouter/free
+TEMPERATURE=0.0
+MAX_TOKENS=2048
+TIMEOUT=30
+```
+
+Ejecución:
+
+```bash
+python module1_demo.py
+```
+
+## Módulo 2 — Procesamiento estructurado con LangChain
+
+El segundo módulo recibe texto técnico no estructurado y devuelve un objeto
+`ExtraccionTecnica` validado por Pydantic:
+
+```json
+{
+  "tecnologias": ["FastAPI", "Redis", "PostgreSQL"],
+  "nivel_de_criticidad": "alta",
+  "resumen_tecnico": "API fuera de línea por agotamiento de conexiones."
+}
+```
+
+La cadena definida en `chain.py` implementa:
+
+- prompt de sistema y entrada con `ChatPromptTemplate`;
+- composición asíncrona con LangChain Expression Language (LCEL);
+- JSON Schema estricto y rechazo de campos adicionales;
+- detección de respuestas truncadas, incompletas o mal formadas;
+- un reintento automático ante errores de salida estructurada;
+- logging del inicio, reintento, validación y resultado.
+
+`main.py` ejecuta el ejemplo incluido. Este pipeline usa OpenRouter y requiere
+`PROVIDER=openrouter`.
+
+```bash
+python main.py
+```
+
+## Módulo 3 — RAG local con ChromaDB
+
+El tercer módulo implementa un RAG end-to-end local sobre la Ley 21.442. Los
+documentos se limpian, dividen y almacenan en ChromaDB; luego una cadena LCEL
+recupera contexto y genera una respuesta respaldada por referencias.
 
 ```text
 data/*.txt
+  -> limpieza de encabezados y pies de página
   -> RecursiveCharacterTextSplitter (600 tokens, overlap 50)
-  -> OpenAIEmbeddings vía OpenRouter (Nemotron 3 Embed gratuito)
+  -> embeddings mediante OpenRouter
   -> ChromaDB persistente (./vectorstore)
-  -> retriever top_k=4
-  -> prompt grounded + ChatOpenAI
-  -> PydanticOutputParser(RAGResponse)
+  -> retriever Top-k
+  -> prompt grounded + modelo conversacional
+  -> RAGResponse validado por Pydantic
 ```
 
-La cadena se compone con LangChain Expression Language (LCEL). El prompt trata
-los documentos como datos no confiables, ignora instrucciones incluidas en
-ellos y obliga al modelo a devolver `"No lo sé"` cuando el contexto recuperado
-no contiene la respuesta. Una validación posterior rechaza referencias que no
-hayan sido devueltas por el retriever.
+Archivos principales:
 
-## Contenido del repositorio
+- `ingest.py`: carga, chunking, IDs deterministas y manifiesto de ingesta;
+- `rag_config.py`: configuración común de embeddings y colección;
+- `rag_chain.py`: recuperación, prompt, generación y validación de referencias;
+- `demo_rag.py`: pregunta respondible y pregunta fuera del corpus;
+- `schemas.py`: contrato `RAGResponse` con respuesta y referencias.
+
+La cadena responde exclusivamente con el contexto recuperado. Si no encuentra
+evidencia suficiente devuelve exactamente `"No lo sé"`; además, rechaza
+referencias que el retriever no haya entregado.
+
+Configuración del RAG local:
+
+```dotenv
+RAG_CHAT_MODEL=openrouter/free
+RAG_EMBEDDING_MODEL=nvidia/nemotron-3-embed-1b:free
+RAG_COLLECTION=ley_21442
+RAG_DATA_DIR=./data
+RAG_VECTORSTORE_DIR=./vectorstore
+RAG_TOP_K=5
+```
+
+```bash
+python ingest.py
+python demo_rag.py
+```
+
+Para reconstruir la colección local cuando cambien las fuentes:
+
+```bash
+python ingest.py --force
+```
+
+## Módulo 4 — RAG híbrido escalable con Pinecone
+
+El cuarto módulo lleva la recuperación a la nube. Implementa carga y chunking
+de documentos, embeddings gratuitos mediante OpenRouter, persistencia en
+Pinecone Serverless, recuperación híbrida BM25 + vectorial y evaluación con
+Precision@5 y Recall@5.
+
+### Arquitectura del Módulo 4
+
+```text
+data/ (PDF, Markdown, JSON o TXT)
+  -> loaders con source, page, category y tags
+  -> RecursiveCharacterTextSplitter (650 tokens, overlap 80)
+  -> OpenRouter / nvidia/nemotron-3-embed-1b:free (2048 dimensiones)
+  -> Pinecone Serverless / namespace aislado
+                         |
+consulta -> +------------+ búsqueda semántica (Top-10)
+            |
+            +-------------- BM25 local (Top-10)
+                         |
+                         v
+              EnsembleRetriever / weighted RRF
+                         |
+                         v
+                       Top-5
+```
+
+El peso predeterminado es 0.6 semántico y 0.4 léxico. BM25 normaliza mayúsculas
+y puntuación para mejorar coincidencias exactas como `Artículo 32`, nombres
+propios o términos técnicos; Pinecone aporta similitud semántica.
+`EnsembleRetriever` combina
+ambos rankings mediante *weighted reciprocal rank fusion* y deduplica por
+`chunk_id`.
+
+## Estructura del repositorio
 
 ```text
 .
-├── data/
-│   ├── 01_regimen_obligaciones_reglamento.txt
-│   ├── 02_administracion_condominio.txt
-│   ├── 03_uso_gastos_seguridad.txt
-│   └── 04_conflictos_registro_sanciones.txt
-├── ingest.py              # carga, limpieza, chunking e indexación persistente
-├── rag_chain.py           # retriever y cadena LCEL asíncrona
-├── rag_config.py          # configuración compartida
-├── demo_rag.py            # consulta real y pregunta trampa
-├── main.py                # entrega asíncrona preservada del Módulo 2
-├── module1_demo.py        # clientes LLM preservados del Módulo 1
-├── schemas.py             # RAGResponse y referencias validadas con Pydantic
-├── tests/test_rag.py      # pruebas sin red ni consumo de API
+├── llm_clients/           # Módulo 1: abstracción multi-proveedor
+├── module1_demo.py        # demo normal y streaming del Módulo 1
+├── chain.py               # Módulo 2: pipeline LCEL estructurado
+├── main.py                # demo de extracción del Módulo 2
+├── ingest.py              # Módulo 3: ingesta local a ChromaDB
+├── rag_chain.py           # Módulo 3: recuperación y generación grounded
+├── rag_config.py          # configuración del RAG local
+├── demo_rag.py            # consultas del Módulo 3
+├── cloud_rag/
+│   ├── config.py          # variables y cliente de embeddings compartido
+│   ├── documents.py       # loaders y chunking
+│   ├── index.py           # creación/verificación Serverless
+│   ├── ingestion.py       # embeddings, metadata y upsert por lotes
+│   ├── retriever.py       # clase RAGSystem y EnsembleRetriever
+│   └── evaluation.py      # Precision@k y Recall@k
+├── data/                  # dataset técnico/legal incluido
+├── evaluation/
+│   └── golden_set.json    # cinco preguntas con fuente esperada
+├── init_pinecone.py
+├── ingest_pinecone.py
+├── evaluate.py
+├── schemas.py             # contratos Pydantic de los módulos 1, 2 y 3
+├── tests/test_cloud_rag.py
 ├── requirements.txt
 └── .env.example
 ```
 
-El dataset proviene del PDF oficial de la Biblioteca del Congreso Nacional de
-Chile, versión generada el 20 de agosto de 2026. Se dividió en cuatro archivos
-por bloques temáticos/páginas. El ingestor elimina los encabezados y pies de
-página repetidos antes de fragmentar.
+## Requisitos e instalación
 
-Los módulos de clientes LLM y extracción técnica de las entregas anteriores se
-conservan y continúan cubiertos por la suite original.
-
-## Requisitos
-
-- Python 3.12 o superior
-- Una API key de OpenRouter para crear embeddings y ejecutar consultas reales
-
-## Instalación
+- Python 3.12 o superior.
+- Una cuenta de Pinecone y una API key.
+- Una API key de OpenRouter. El embedding predeterminado es gratuito.
 
 ```bash
 python3 -m venv .venv
@@ -67,128 +216,192 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-En Windows PowerShell, activa el entorno con:
+`.env` está excluido de Git. Nunca publiques llaves reales.
 
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-Completa únicamente tu archivo local `.env`:
+Configura, como mínimo:
 
 ```dotenv
-OPENROUTER_API_KEY=tu_api_key
-RAG_CHAT_MODEL=openrouter/free
-RAG_EMBEDDING_MODEL=nvidia/nemotron-3-embed-1b:free
-RAG_COLLECTION=ley_21442
+PINECONE_API_KEY=pcsk_...
+OPENROUTER_API_KEY=sk-or-v1-...
+INDEX_NAME=ley-21442-rag-nemotron
+PINECONE_NAMESPACE=ley-21442
+
+PINECONE_CLOUD=aws
+PINECONE_REGION=us-east-1
+EMBEDDING_PROVIDER=openrouter
+EMBEDDING_MODEL=nvidia/nemotron-3-embed-1b:free
+EMBEDDING_DIMENSION=2048
 RAG_DATA_DIR=./data
-RAG_VECTORSTORE_DIR=./vectorstore
-RAG_TOP_K=4
+RAG_TOP_K=5
+RAG_CANDIDATE_K=10
+RAG_SEMANTIC_WEIGHT=0.6
+RAG_LEXICAL_WEIGHT=0.4
 ```
 
-`.env` y `vectorstore/` están excluidos de Git. No subas llaves ni la base
-vectorial generada localmente.
+## Cómo replicar el índice de Pinecone
 
-## 1. Ingesta
-
-Ejecuta una vez:
+### 1. Crear o verificar el índice Serverless
 
 ```bash
-python ingest.py
+python init_pinecone.py
 ```
 
-El comando carga todos los `.txt` y `.md` de `data/`, crea chunks de 600 tokens
-con 50 tokens de solapamiento y los guarda en `./vectorstore`.
+El script es idempotente: si `INDEX_NAME` no existe crea un índice denso,
+Serverless, con métrica `cosine`, dimensión 2048 y la región configurada. Si ya
+existe, valida dimensión y métrica antes de continuar. Esto evita insertar por
+error embeddings en un índice creado para otro modelo o dimensión.
 
-El manifiesto local registra el hash de las fuentes, el modelo de embeddings y
-la configuración de chunking. Si todo coincide, una segunda ejecución reutiliza
-el índice y no vuelve a consumir la API. Si cambian las fuentes o el modelo,
-reconstruye explícitamente la colección:
+El índice usa un nombre nuevo porque Pinecone no permite cambiar la dimensión
+de un índice existente. Si previamente se creó `ley-21442-rag` a 1536 para
+`text-embedding-3-small`, se conserva intacto y Nemotron utiliza
+`ley-21442-rag-nemotron` a 2048.
+
+Salida esperada:
+
+```text
+Índice 'ley-21442-rag-nemotron' listo | dimensión=2048 | métrica=cosine | namespace='ley-21442'
+```
+
+### 2. Ingerir el dataset
 
 ```bash
-python ingest.py --force
+python ingest_pinecone.py
 ```
 
-El mismo `RAG_EMBEDDING_MODEL` se usa al indexar y al consultar. La cadena se
-detiene con un error claro si el manifiesto indica un modelo distinto.
+La ingesta admite `.pdf`, `.md`, `.markdown`, `.json` y `.txt`. Usa chunks de
+650 tokens y 80 de solapamiento, dentro del punto medio recomendado de 500-800.
+Cada vector guarda el texto original en Pinecone para que recuperar un
+resultado no requiera consultar una base relacional adicional.
 
-## 2. Consultas asíncronas
+Esquema de metadata:
 
-Ejecuta los dos casos requeridos (uno respondible y uno fuera del dataset):
+```json
+{
+  "text": "contenido original del chunk",
+  "document_id": "02_administracion_condominio.txt",
+  "source": "02_administracion_condominio.txt",
+  "page": 13,
+  "category": "administracion-condominio",
+  "tags": ["administracion-condominio", "txt"],
+  "chunk_id": "02_administracion_condominio.txt#p13-chunk-0001",
+  "chunk_index": 1
+}
+```
+
+Los IDs son hashes deterministas, por lo que repetir una ingesta sin cambios
+actualiza los mismos vectores. Si las fuentes cambiaron y se necesita una
+sincronización limpia, elimina solamente el namespace configurado y vuelve a
+subirlo:
 
 ```bash
-python demo_rag.py
+python ingest_pinecone.py --replace-namespace
 ```
 
-También puedes enviar una sola pregunta:
+Esta opción no elimina el índice ni otros namespaces. Un namespace distinto por
+cliente, tenant o corpus mantiene los resultados aislados:
 
-```bash
-python demo_rag.py "¿Cuáles son los órganos de administración de un condominio?"
+```dotenv
+PINECONE_NAMESPACE=cliente-acme
 ```
 
-Uso desde Python:
+### 3. Recuperar Top-5 desde Python
 
 ```python
-import asyncio
+from cloud_rag.retriever import RAGSystem
 
-from rag_chain import get_rag_response
+rag = RAGSystem()
+documents = rag.query("¿Qué mérito tiene el aviso de cobro del artículo 32?")
 
-
-async def main() -> None:
-    result = await get_rag_response(
-        "¿Cuáles son los órganos de administración de un condominio?"
-    )
-    print(result.model_dump_json(indent=2))
-
-
-asyncio.run(main())
+for rank, document in enumerate(documents, start=1):
+    print(rank, document.metadata["source"], document.metadata["page"])
 ```
 
-Contrato de salida:
+`RAGSystem` carga el mismo corpus para BM25, consulta Pinecone dentro de
+`PINECONE_NAMESPACE` y encapsula ambos recuperadores en un
+`EnsembleRetriever`. `query()` devuelve cinco `Document` de LangChain; no hace
+una llamada a un LLM generativo.
+
+## Evaluación
+
+El Golden Set incluido tiene cinco preguntas y la fuente relevante esperada:
 
 ```json
 {
-  "answer": "Respuesta basada únicamente en el contexto.",
-  "references": [
-    {
-      "source": "02_administracion_condominio.txt",
-      "chunk_id": "02_administracion_condominio.txt#chunk-001"
-    }
-  ]
+  "pregunta": "¿Cuáles son los órganos de administración según el artículo 12?",
+  "documento_id_esperado": "02_administracion_condominio.txt"
 }
 ```
 
-Para una pregunta ajena a los documentos, la salida esperada es:
-
-```json
-{
-  "answer": "No lo sé",
-  "references": []
-}
-```
-
-## Pruebas
-
-La suite usa retrievers y modelos simulados: no necesita una API key, no accede
-a internet y no consume créditos.
+Después de ingerir el corpus, ejecuta:
 
 ```bash
-pytest
+python evaluate.py
 ```
 
-Las pruebas del RAG verifican:
+El reporte lista aciertos y fuentes recuperadas, y termina con:
 
-- una pregunta cuya respuesta está en el contexto;
-- una pregunta trampa que debe devolver exactamente `"No lo sé"`;
-- rechazo de referencias inventadas;
-- validación de consultas vacías;
-- limpieza, chunking y metadatos de los documentos.
+```text
+Evaluación del recuperador híbrido (5 preguntas)
+==============================================================
+...
+--------------------------------------------------------------
+Precision@5: 56.00%
+Recall@5:    100.00%
+```
 
-## Decisiones de seguridad y calidad
+- `Precision@5 = relevantes recuperados / 5` para cada pregunta, promediada
+  sobre el benchmark.
+- `Recall@5 = relevantes recuperados / relevantes esperados` para cada
+  pregunta, promediada sobre el benchmark.
 
-- `top_k` está restringido a 3-5 para evitar contexto excesivo y *Lost in the
-  Middle*;
-- indexación y consulta comparten el mismo modelo de embeddings;
-- la base vectorial se persiste y reutiliza mediante un manifiesto;
-- el prompt prohíbe conocimiento externo y trata el contexto como datos;
-- `PydanticOutputParser` exige una salida estructurada;
-- cada referencia se contrasta con los chunks recuperados antes de devolverla.
+Para Precision@5, cada chunk cuya fuente pertenece a los documentos relevantes
+cuenta como útil. Para Recall@5, las fuentes se deduplican: un 100% significa
+que las cinco fuentes esperadas aparecieron en sus respectivos Top-5.
+
+Resultado verificado el 20 de agosto de 2026 con
+`nvidia/nemotron-3-embed-1b:free`, 121 chunks y el namespace `ley-21442`:
+
+| Métrica | Resultado |
+| --- | ---: |
+| Precision@5 | 56.00% |
+| Recall@5 | 100.00% |
+| Fuentes esperadas recuperadas | 5/5 |
+
+Se puede cambiar el benchmark o `k`:
+
+```bash
+python evaluate.py --golden-set evaluation/golden_set.json --k 5
+```
+
+## Pruebas y controles de calidad
+
+La suite completa es offline: usa clientes Pinecone y embeddings simulados, no
+consume créditos ni necesita claves.
+
+```bash
+pytest -q
+ruff check .
+```
+
+Controles cubiertos:
+
+- Módulo 1 — `tests/test_clients.py` y `tests/test_config.py`: selección de
+  proveedor, configuración, respuesta normal y streaming;
+- Módulo 2 — `tests/test_chain.py` y `tests/test_schemas.py`: JSON Schema,
+  Pydantic, reintentos y detección de respuestas truncadas;
+- Módulo 3 — `tests/test_rag.py`: limpieza, ingesta local, grounding y
+  validación de referencias;
+- Módulo 4 — `tests/test_cloud_rag.py`: índice, metadata, recuperación híbrida
+  y métricas;
+- loaders de Markdown y JSON con metadata enriquecida;
+- chunking de 650/80 tokens e IDs citables;
+- detección de mismatch de dimensiones antes del upsert;
+- texto original y namespace presentes en cada vector;
+- reemplazo limitado al namespace solicitado;
+- fórmulas de Precision@5 y Recall@5;
+- pruebas previas del proyecto con ChromaDB y clientes LLM.
+
+Estado verificado: **45 pruebas aprobadas**, **ruff sin errores**, índice
+Serverless de 2048 dimensiones creado, **121 chunks ingeridos** y las cinco
+consultas cloud evaluadas. Nemotron se consumió mediante su variante gratuita
+de OpenRouter; Pinecone sigue sujeto a los límites del plan de la cuenta.

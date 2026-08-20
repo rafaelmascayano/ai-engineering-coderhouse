@@ -1,0 +1,22 @@
+[
+  {
+    "pregunta": "¿Cuáles son los órganos de administración de un condominio según el artículo 12?",
+    "documento_id_esperado": "02_administracion_condominio.txt"
+  },
+  {
+    "pregunta": "¿Qué exige el artículo 24 para condominios con más de 200 unidades habitacionales?",
+    "documento_id_esperado": "03_uso_gastos_seguridad.txt"
+  },
+  {
+    "pregunta": "¿Qué mérito tienen los avisos de cobro firmados por el administrador según el artículo 32?",
+    "documento_id_esperado": "03_uso_gastos_seguridad.txt"
+  },
+  {
+    "pregunta": "¿Puede el reglamento de copropiedad prohibir mascotas dentro de las unidades?",
+    "documento_id_esperado": "01_regimen_obligaciones_reglamento.txt"
+  },
+  {
+    "pregunta": "¿Qué tribunal conoce las contiendas relativas a la administración del condominio según el artículo 44?",
+    "documento_id_esperado": "04_conflictos_registro_sanciones.txt"
+  }
+]
