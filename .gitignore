@@ -10,3 +10,6 @@ __pycache__/
 *.py[cod]
 .ruff_cache/
 .pytest_cache/
+
+# Vector database generated locally
+vectorstore/
