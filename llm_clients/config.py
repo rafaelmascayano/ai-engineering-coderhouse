@@ -1,14 +1,9 @@
 import os
-from enum import Enum
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-
-class Provider(str, Enum):
-    ANTHROPIC = "anthropic"
-    OPENAI = "openai"
-    OPENROUTER = "openrouter"
+from enums import Provider
 
 
 class Configuration(BaseModel):

@@ -22,7 +22,7 @@ class BaseLLMClient(ABC):
     def _error_response(self, error: Exception) -> ModelResponse:
         return ModelResponse(
             content="",
-            provider=self.config.provider.value,
+            provider=self.config.provider,
             model=self.config.model_name,
             error=f"{type(error).__name__}: {error}",
         )

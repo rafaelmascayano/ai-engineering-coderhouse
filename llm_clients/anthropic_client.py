@@ -32,7 +32,7 @@ class AnthropicClient(BaseLLMClient):
             )
             return ModelResponse(
                 content=response.content[0].text,
-                provider=self.config.provider.value,
+                provider=self.config.provider,
                 model=self.config.model_name,
             )
         except AnthropicAPIError as error:

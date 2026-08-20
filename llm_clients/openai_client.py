@@ -32,7 +32,7 @@ class OpenAIClient(BaseLLMClient):
             )
             return ModelResponse(
                 content=response.choices[0].message.content or "",
-                provider=self.config.provider.value,
+                provider=self.config.provider,
                 model=self.config.model_name,
             )
         except OpenAIAPIError as error:
