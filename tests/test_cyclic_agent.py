@@ -8,12 +8,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
+import pytest
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from cyclic_agent.agent import CyclicAgent
+from cyclic_agent.agent import CyclicAgent, create_openrouter_model
+from cyclic_agent.config import AgentSettings
 from cyclic_agent.graph import build_graph
 
 
@@ -126,6 +128,18 @@ class RetryModel:
             assert "not_found" in str(observations[0].content)
             return _tool_call("buscar_resumen_pedidos", 102, "call-retry")
         return AIMessage(content="Reintento exitoso: el cliente 102 tiene 3 pedidos.")
+
+
+def test_real_model_client_reuses_openrouter_free_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    model = create_openrouter_model(AgentSettings())
+
+    assert model.model_name == "openrouter/free"
+    assert model.openai_api_base == "https://openrouter.ai/api/v1"
+    assert model.openai_api_key is not None
+    assert model.openai_api_key.get_secret_value() == "test-openrouter-key"
 
 
 def test_multi_step_trace_contains_two_tool_calls(tmp_path: Path) -> None:

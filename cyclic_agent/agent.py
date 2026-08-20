@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import CompiledStateGraph
+from pydantic import SecretStr
 
 from cyclic_agent.config import AgentSettings
 from cyclic_agent.graph import (
@@ -22,6 +23,8 @@ from cyclic_agent.graph import (
     graph_config,
 )
 from cyclic_agent.tracing import records_from_update, write_trace
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 class CyclicAgent:
@@ -80,15 +83,19 @@ class CyclicAgent:
         return str(final_message.content)
 
 
-def create_openai_model(settings: AgentSettings) -> ChatOpenAI:
-    """Crea el LLM real; la clave se lee del entorno y nunca se persiste."""
+def create_openrouter_model(settings: AgentSettings) -> ChatOpenAI:
+    """Crea el modelo gratuito mediante la API OpenAI-compatible de OpenRouter."""
 
-    if not os.getenv("OPENAI_API_KEY"):
+    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
         raise RuntimeError(
-            "Falta OPENAI_API_KEY. Configúrala en .env antes de ejecutar la demo."
+            "Falta OPENROUTER_API_KEY. Configúrala en .env antes de ejecutar "
+            "la demo."
         )
     return ChatOpenAI(
         model=settings.model,
+        api_key=SecretStr(api_key),
+        base_url=OPENROUTER_BASE_URL,
         temperature=settings.temperature,
         max_retries=2,
     )
@@ -103,7 +110,7 @@ async def create_agent(
     """Abre el checkpointer SQLite asíncrono y entrega un agente listo para usar."""
 
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
-    selected_model = model if model is not None else create_openai_model(settings)
+    selected_model = model if model is not None else create_openrouter_model(settings)
     async with AsyncSqliteSaver.from_conn_string(
         str(settings.database_path)
     ) as checkpointer:

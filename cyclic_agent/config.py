@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 class AgentSettings:
     """Valores de ejecución inmutables cargados desde variables de entorno."""
 
-    model: str = "gpt-4.1-mini"
+    model: str = "openrouter/free"
     temperature: float = 0.0
     database_path: Path = Path("checkpoints/agent.sqlite")
     recursion_limit: int = 10
@@ -32,7 +32,7 @@ class AgentSettings:
             raise ValueError("AGENT_TEMPERATURE debe estar entre 0 y 2")
 
         return cls(
-            model=os.getenv("AGENT_MODEL", "gpt-4.1-mini"),
+            model=os.getenv("AGENT_MODEL", "openrouter/free"),
             temperature=temperature,
             database_path=Path(
                 os.getenv("AGENT_DB_PATH", "checkpoints/agent.sqlite")

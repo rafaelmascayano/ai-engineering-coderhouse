@@ -220,8 +220,8 @@ elimina exclusivamente `checkpoints/agent.sqlite`; no versionamos checkpoints.
 Configura en `.env`:
 
 ```dotenv
-OPENAI_API_KEY=sk-...
-AGENT_MODEL=gpt-4.1-mini
+OPENROUTER_API_KEY=sk-or-v1-...
+AGENT_MODEL=openrouter/free
 AGENT_DB_PATH=./checkpoints/agent.sqlite
 AGENT_RECURSION_LIMIT=10
 LANGGRAPH_STRICT_MSGPACK=true
@@ -306,8 +306,8 @@ ejemplo versionado prueba dos invocaciones antes de la conclusión.
 - Python 3.12 o superior.
 - Una cuenta de Pinecone y una API key.
 - Una API key de OpenRouter. El embedding predeterminado es gratuito.
-- Una API key de OpenAI para ejecutar el agente del módulo 5. Sus pruebas son
-  offline y no consumen API.
+- El agente del módulo 5 reutiliza la misma API key de OpenRouter. Sus pruebas
+  son offline y no consumen API.
 
 ```bash
 python3 -m venv .venv
@@ -324,7 +324,6 @@ Configura, como mínimo:
 ```dotenv
 PINECONE_API_KEY=pcsk_...
 OPENROUTER_API_KEY=sk-or-v1-...
-OPENAI_API_KEY=sk-...
 INDEX_NAME=ley-21442-rag-nemotron
 PINECONE_NAMESPACE=ley-21442
 
@@ -339,7 +338,7 @@ RAG_CANDIDATE_K=10
 RAG_SEMANTIC_WEIGHT=0.6
 RAG_LEXICAL_WEIGHT=0.4
 
-AGENT_MODEL=gpt-4.1-mini
+AGENT_MODEL=openrouter/free
 AGENT_DB_PATH=./checkpoints/agent.sqlite
 AGENT_RECURSION_LIMIT=10
 LANGGRAPH_STRICT_MSGPACK=true
@@ -511,7 +510,7 @@ Controles cubiertos:
 - fórmulas de Precision@5 y Recall@5;
 - pruebas previas del proyecto con ChromaDB y clientes LLM.
 
-Estado verificado: **48 pruebas aprobadas**, **ruff y mypy sin errores**, índice
+Estado verificado: **49 pruebas aprobadas**, **ruff y mypy sin errores**, índice
 Serverless de 2048 dimensiones creado, **121 chunks ingeridos** y las cinco
 consultas cloud evaluadas. Nemotron se consumió mediante su variante gratuita
 de OpenRouter; Pinecone sigue sujeto a los límites del plan de la cuenta.
