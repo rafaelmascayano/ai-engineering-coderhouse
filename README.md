@@ -1,12 +1,31 @@
-# AI Engineering: clientes LLM y pipeline de extracción técnica
+# Pre-entrega 2: pipeline de extracción técnica
 
-Repositorio del curso con dos entregas compatibles entre sí:
+Esta rama contiene la entrega del Módulo 2. El código del Módulo 1 se conserva
+como base reutilizable, pero el punto de entrada principal corresponde al
+pipeline de extracción técnica.
 
-1. Clientes LLM asíncronos para OpenAI, Anthropic y OpenRouter.
-2. Pipeline LCEL que transforma texto técnico sin procesar en un objeto
-   validado con Pydantic.
+## Evaluación rápida
 
-## Pre-entrega 2: pipeline de extracción técnica
+Archivos requeridos por la consigna:
+
+- `schemas.py`: contrato Pydantic `ExtraccionTecnica`.
+- `chain.py`: prompt, salida estructurada, LCEL y reintento.
+- `main.py`: mini-script asíncrono ejecutable.
+
+Después de configurar `.env`, la entrega se ejecuta con:
+
+```bash
+python main.py
+```
+
+Las pruebas específicas y la suite completa se ejecutan con:
+
+```bash
+pytest tests/test_chain.py tests/test_schemas.py -q
+pytest -q
+```
+
+## Funcionamiento
 
 El pipeline recibe una descripción de arquitectura, incidente o log de error y
 devuelve una instancia de `ExtraccionTecnica` con este contrato:
@@ -47,7 +66,7 @@ dos intentos fallidos propaga el error validado.
 Configura `.env` y ejecuta:
 
 ```bash
-python demo_pipeline.py
+python main.py
 ```
 
 El script utiliza `asyncio.run()`, llama a `process_text()` mediante `.ainvoke()`
@@ -147,12 +166,12 @@ El archivo `.env` está excluido de Git. Nunca publiques claves reales.
 El ejemplo anterior de clientes asíncronos se conserva. Ejecuta:
 
 ```bash
-python main.py
+python module1_demo.py
 ```
 
-`main.py` muestra una respuesta normal y otra en streaming usando el proveedor
-definido en `PROVIDER`. Los clientes soportados son OpenAI, Anthropic y
-OpenRouter, con manejo controlado de errores y timeout.
+`module1_demo.py` muestra una respuesta normal y otra en streaming usando el
+proveedor definido en `PROVIDER`. Los clientes soportados son OpenAI, Anthropic
+y OpenRouter, con manejo controlado de errores y timeout.
 
 ## Tests y calidad
 
@@ -180,8 +199,8 @@ pre-commit run --all-files
 .
 ├── chain.py                    # Prompt, LCEL, salida estructurada y reintento
 ├── schemas.py                  # Contratos Pydantic de ambos módulos
-├── demo_pipeline.py            # Mini-script asíncrono de la pre-entrega 2
-├── main.py                     # Ejemplo normal y streaming del Módulo 1
+├── main.py                     # Entry point asíncrono de la pre-entrega 2
+├── module1_demo.py             # Ejemplo preservado del Módulo 1
 ├── llm_clients/                # Clientes OpenAI, Anthropic y OpenRouter
 ├── tests/                      # Tests unitarios sin llamadas externas
 ├── requirements.txt            # Dependencias del proyecto
