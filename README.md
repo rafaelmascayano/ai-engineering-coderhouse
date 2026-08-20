@@ -1,14 +1,14 @@
-# AI Engineering: entrega acumulativa — Módulos 1 a 4
+# AI Engineering: entrega acumulativa — Módulos 1 a 5
 
-Este repositorio reúne las cuatro pre-entregas del curso en una evolución
+Este repositorio reúne las cinco pre-entregas del curso en una evolución
 progresiva: comienza con clientes LLM intercambiables, agrega procesamiento
-estructurado con LangChain, construye un RAG local y finalmente migra la
-recuperación a Pinecone Serverless con búsqueda híbrida y métricas.
+estructurado con LangChain, construye un RAG local, migra la recuperación a
+Pinecone Serverless y culmina con un agente ReAct cíclico con memoria SQLite.
 
 El corpus de los módulos 3 y 4 es la Ley chilena N.º 21.442 de Copropiedad
 Inmobiliaria, organizada en cuatro documentos temáticos dentro de `data/`.
 
-## Resumen de los cuatro módulos
+## Resumen de los cinco módulos
 
 | Módulo | Objetivo | Implementación principal | Ejecución |
 | --- | --- | --- | --- |
@@ -16,12 +16,12 @@ Inmobiliaria, organizada en cuatro documentos temáticos dentro de `data/`.
 | 2 | Transformar texto libre en datos validados | Cadena LCEL, salida estructurada Pydantic, reintentos y logging | `python main.py` |
 | 3 | Construir un RAG local completo | Ingesta, ChromaDB persistente, recuperación, generación grounded y referencias | `python ingest.py` y `python demo_rag.py` |
 | 4 | Escalar y evaluar la recuperación | Pinecone Serverless, namespaces, BM25 + vectores y Precision@5/Recall@5 | `python init_pinecone.py`, `python ingest_pinecone.py` y `python evaluate.py` |
+| 5 | Razonar, usar herramientas y recordar sesiones | `StateGraph`, `MessagesState`, `ToolNode`, `tools_condition` y `AsyncSqliteSaver` | `python -m cyclic_agent "..." --thread-id demo` |
 
 ```text
-Módulo 1              Módulo 2              Módulo 3              Módulo 4
-clientes LLM  ──────> extracción LCEL ────> RAG local ──────────> RAG cloud
-Factory + async        JSON validado         ChromaDB               Pinecone
-streaming              reintentos            respuesta grounded     BM25 + vector
+Módulo 1       Módulo 2       Módulo 3       Módulo 4       Módulo 5
+clientes LLM -> LCEL estruct. -> RAG local  -> RAG cloud  -> agente ReAct
+Factory/async   Pydantic         ChromaDB       Pinecone      SQLite/thread
 ```
 
 ## Módulo 1 — Clientes LLM multi-proveedor
@@ -171,6 +171,100 @@ propios o términos técnicos; Pinecone aporta similitud semántica.
 ambos rankings mediante *weighted reciprocal rank fusion* y deduplica por
 `chunk_id`.
 
+## Módulo 5 — Agente cíclico con memoria persistente
+
+El quinto módulo implementa un agente asíncrono de pedidos. El LLM recibe las
+descripciones de las herramientas mediante `bind_tools()` y decide por sí mismo
+si debe llamarlas; no existe un `if/else` que clasifique el prompt o fuerce una
+ruta. La única decisión del grafo es `tools_condition`, que inspecciona los
+`tool_calls` generados por el propio modelo.
+
+```text
+START -> model -- sin tool_calls --> END
+           |
+           +-- con tool_calls --> tools
+                                  |
+                                  +-- éxito, error o dato incompleto --> model
+```
+
+Componentes:
+
+- `cyclic_agent/tools.py`: dos herramientas propias asíncronas decoradas con
+  `@tool` y docstrings orientados a la selección autónoma del LLM;
+- `cyclic_agent/graph.py`: `AgentState(MessagesState)`, nodo del modelo,
+  `ToolNode`, `tools_condition` y arista de retorno;
+- `cyclic_agent/agent.py`: `astream` asíncrono, límite de recursión y
+  persistencia por `thread_id`;
+- `cyclic_agent/tracing.py`: exporta mensajes, llamadas y observaciones como
+  JSON, sin exponer cadena de pensamiento privada;
+- `tests/test_cyclic_agent.py`: ciclo de dos herramientas, reintento tras un
+  resultado incompleto y aislamiento/persistencia de sesiones;
+- `examples/react_trace.json`: traza ReAct multi-paso incluida en el repo.
+
+### Persistencia y asincronía
+
+La implementación usa `AsyncSqliteSaver`, variante asíncrona de
+`SqliteSaver`, porque todo el flujo se ejecuta con `asyncio` y `astream`. Cada
+checkpoint queda asociado al `thread_id`; reutilizarlo permite que una pregunta
+elíptica recupere el cliente mencionado en turnos anteriores, incluso al volver
+a iniciar el proceso. Un `thread_id` distinto crea una sesión aislada.
+
+El límite `AGENT_RECURSION_LIMIT=10` se agrega a cada invocación. Un error de
+validación o ejecución se convierte en un `ToolMessage` estructurado y vuelve al
+modelo: este puede corregir los argumentos y reintentar si tiene evidencia, o
+pedir aclaración. Para conversaciones largas, inicia un `thread_id` nuevo o
+elimina exclusivamente `checkpoints/agent.sqlite`; no versionamos checkpoints.
+
+### Ejecutar la demo multi-paso
+
+Configura en `.env`:
+
+```dotenv
+OPENAI_API_KEY=sk-...
+AGENT_MODEL=gpt-4.1-mini
+AGENT_DB_PATH=./checkpoints/agent.sqlite
+AGENT_RECURSION_LIMIT=10
+LANGGRAPH_STRICT_MSGPACK=true
+```
+
+Primera consulta: el modelo necesita llamar una vez al resumen y otra al último
+pedido antes de concluir.
+
+```bash
+python -m cyclic_agent \
+  "¿Cuántos pedidos tuvo el cliente 102, cuál fue el total y cuál fue el último?" \
+  --thread-id demo-cliente-102 \
+  --trace traces/demo-cliente-102.json
+```
+
+Salida esperada (la redacción puede variar según el modelo):
+
+```text
+El cliente 102 tuvo 3 pedidos por un total de $14.500. El último fue el pedido
+5015, del 2026-08-03, por $6.500 y está en preparación.
+```
+
+Con el mismo `thread_id`, el checkpointer recupera el contexto:
+
+```bash
+python -m cyclic_agent "¿Y el último?" --thread-id demo-cliente-102
+```
+
+La traza generada contiene únicamente eventos observables: mensajes del modelo,
+nombre/argumentos de cada herramienta, sus resultados y respuesta final. El
+ejemplo versionado prueba dos invocaciones antes de la conclusión.
+
+### Correspondencia con los criterios de aceptación
+
+| Criterio | Evidencia |
+| --- | --- |
+| Autonomía | `bind_tools()` + `tools_condition`; no hay router manual de prompts |
+| Ciclo de retorno | arista `tools -> model`, errores estructurados y prueba de reintento |
+| Resiliencia de estado | `AsyncSqliteSaver` en disco + `thread_id` y prueba entre turnos |
+| Código limpio | Python `>=3.12`, type hints estrictos, `asyncio`, Ruff y mypy |
+| Multi-paso | dos herramientas observables en `examples/react_trace.json` |
+| Techo de costos | `recursion_limit=10`, configurable entre 2 y 50 |
+
 ## Estructura del repositorio
 
 ```text
@@ -190,6 +284,9 @@ ambos rankings mediante *weighted reciprocal rank fusion* y deduplica por
 │   ├── ingestion.py       # embeddings, metadata y upsert por lotes
 │   ├── retriever.py       # clase RAGSystem y EnsembleRetriever
 │   └── evaluation.py      # Precision@k y Recall@k
+├── cyclic_agent/          # Módulo 5: grafo, tools, SQLite, CLI y trazas
+├── examples/
+│   └── react_trace.json   # ciclo modelo -> tool -> modelo -> tool -> respuesta
 ├── data/                  # dataset técnico/legal incluido
 ├── evaluation/
 │   └── golden_set.json    # cinco preguntas con fuente esperada
@@ -198,6 +295,8 @@ ambos rankings mediante *weighted reciprocal rank fusion* y deduplica por
 ├── evaluate.py
 ├── schemas.py             # contratos Pydantic de los módulos 1, 2 y 3
 ├── tests/test_cloud_rag.py
+├── tests/test_cyclic_agent.py
+├── pyproject.toml         # Python >=3.12, Ruff y mypy estricto
 ├── requirements.txt
 └── .env.example
 ```
@@ -207,6 +306,8 @@ ambos rankings mediante *weighted reciprocal rank fusion* y deduplica por
 - Python 3.12 o superior.
 - Una cuenta de Pinecone y una API key.
 - Una API key de OpenRouter. El embedding predeterminado es gratuito.
+- Una API key de OpenAI para ejecutar el agente del módulo 5. Sus pruebas son
+  offline y no consumen API.
 
 ```bash
 python3 -m venv .venv
@@ -223,6 +324,7 @@ Configura, como mínimo:
 ```dotenv
 PINECONE_API_KEY=pcsk_...
 OPENROUTER_API_KEY=sk-or-v1-...
+OPENAI_API_KEY=sk-...
 INDEX_NAME=ley-21442-rag-nemotron
 PINECONE_NAMESPACE=ley-21442
 
@@ -236,6 +338,11 @@ RAG_TOP_K=5
 RAG_CANDIDATE_K=10
 RAG_SEMANTIC_WEIGHT=0.6
 RAG_LEXICAL_WEIGHT=0.4
+
+AGENT_MODEL=gpt-4.1-mini
+AGENT_DB_PATH=./checkpoints/agent.sqlite
+AGENT_RECURSION_LIMIT=10
+LANGGRAPH_STRICT_MSGPACK=true
 ```
 
 ## Cómo replicar el índice de Pinecone
@@ -381,6 +488,7 @@ consume créditos ni necesita claves.
 ```bash
 pytest -q
 ruff check .
+mypy cyclic_agent
 ```
 
 Controles cubiertos:
@@ -393,6 +501,8 @@ Controles cubiertos:
   validación de referencias;
 - Módulo 4 — `tests/test_cloud_rag.py`: índice, metadata, recuperación híbrida
   y métricas;
+- Módulo 5 — `tests/test_cyclic_agent.py`: dos tool calls, retorno/reintento,
+  traza JSON, memoria por `thread_id` y aislamiento entre sesiones;
 - loaders de Markdown y JSON con metadata enriquecida;
 - chunking de 650/80 tokens e IDs citables;
 - detección de mismatch de dimensiones antes del upsert;
@@ -401,7 +511,7 @@ Controles cubiertos:
 - fórmulas de Precision@5 y Recall@5;
 - pruebas previas del proyecto con ChromaDB y clientes LLM.
 
-Estado verificado: **45 pruebas aprobadas**, **ruff sin errores**, índice
+Estado verificado: **48 pruebas aprobadas**, **ruff y mypy sin errores**, índice
 Serverless de 2048 dimensiones creado, **121 chunks ingeridos** y las cinco
 consultas cloud evaluadas. Nemotron se consumió mediante su variante gratuita
 de OpenRouter; Pinecone sigue sujeto a los límites del plan de la cuenta.

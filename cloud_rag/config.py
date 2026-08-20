@@ -38,7 +38,9 @@ class CloudRAGSettings:
         pinecone_api_key = os.getenv("PINECONE_API_KEY", "").strip()
         openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
         openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        embedding_provider = os.getenv("EMBEDDING_PROVIDER", "openrouter").strip().lower()
+        embedding_provider = (
+            os.getenv("EMBEDDING_PROVIDER", "openrouter").strip().lower()
+        )
         if embedding_provider not in {"openrouter", "openai"}:
             raise ValueError("EMBEDDING_PROVIDER debe ser 'openrouter' u 'openai'")
         embedding_api_key = (
