@@ -1,9 +1,11 @@
-# AI Engineering: entrega acumulativa — Módulos 1 a 5
+# AI Engineering: entrega acumulativa — Módulos 1 a 6
 
-Este repositorio reúne las cinco pre-entregas del curso en una evolución
+Este repositorio reúne las seis pre-entregas del curso en una evolución
 progresiva: comienza con clientes LLM intercambiables, agrega procesamiento
 estructurado con LangChain, construye un RAG local, migra la recuperación a
-Pinecone Serverless y culmina con un agente ReAct cíclico con memoria SQLite.
+Pinecone Serverless, agrega un agente ReAct cíclico con memoria SQLite y
+culmina con un orquestador multi-agente jerárquico que reutiliza ese RAG
+local como base de conocimiento de un especialista.
 
 El corpus de los módulos 3 y 4 es la Ley chilena N.º 21.442 de Copropiedad
 Inmobiliaria, organizada en cuatro documentos temáticos dentro de `data/`.
@@ -17,11 +19,12 @@ Inmobiliaria, organizada en cuatro documentos temáticos dentro de `data/`.
 | 3 | Construir un RAG local completo | Ingesta, ChromaDB persistente, recuperación, generación grounded y referencias | `python ingest.py` y `python demo_rag.py` |
 | 4 | Escalar y evaluar la recuperación | Pinecone Serverless, namespaces, BM25 + vectores y Precision@5/Recall@5 | `python init_pinecone.py`, `python ingest_pinecone.py` y `python evaluate.py` |
 | 5 | Razonar, usar herramientas y recordar sesiones | `StateGraph`, `MessagesState`, `ToolNode`, `tools_condition` y `AsyncSqliteSaver` | `python -m cyclic_agent "..." --thread-id demo` |
+| 6 | Orquestar especialistas bajo un Supervisor | `StateGraph` jerárquico, aristas condicionales, estado compartido con aportes trazables y techo de pasos | `python demo_orchestrator.py` |
 
 ```text
-Módulo 1       Módulo 2       Módulo 3       Módulo 4       Módulo 5
-clientes LLM -> LCEL estruct. -> RAG local  -> RAG cloud  -> agente ReAct
-Factory/async   Pydantic         ChromaDB       Pinecone      SQLite/thread
+Módulo 1       Módulo 2       Módulo 3       Módulo 4       Módulo 5       Módulo 6
+clientes LLM -> LCEL estruct. -> RAG local  -> RAG cloud  -> agente ReAct -> orquestador
+Factory/async   Pydantic         ChromaDB       Pinecone      SQLite/thread  Supervisor
 ```
 
 ## Módulo 1 — Clientes LLM multi-proveedor
@@ -265,6 +268,122 @@ ejemplo versionado prueba dos invocaciones antes de la conclusión.
 | Multi-paso | dos herramientas observables en `examples/react_trace.json` |
 | Techo de costos | `recursion_limit=10`, configurable entre 2 y 50 |
 
+## Módulo 6 — Orquestador multi-agente jerárquico
+
+El sexto módulo implementa un orquestador de **topología jerárquica**: un
+nodo `Supervisor` decide en cada turno a qué especialista delegar (o si ya
+puede finalizar), y cada especialista solo hace una cosa. No hay malla de
+comunicación agente-a-agente: toda coordinación pasa por el Supervisor.
+
+### Por qué jerárquico y no en malla
+
+Con solo dos especialistas de dominios distintos (investigación vs. cómputo)
+una topología en malla no aporta nada — no necesitan negociar entre sí, solo
+necesitan que alguien decida el orden. La jerárquica además resuelve sola el
+"Supervisor infinito": toda la lógica de parada (rúbrica de suficiencia +
+techo de pasos) vive en un único nodo, en vez de estar repartida en criterios
+de salida de cada especialista.
+
+### Grafo
+
+```mermaid
+graph TD
+    START([START]) --> Supervisor
+    Supervisor -- "next=researcher" --> Researcher[researcher]
+    Supervisor -- "next=analyst" --> Analyst[analyst]
+    Supervisor -- "next=end" --> END([END])
+    Researcher -- "aporta hallazgo" --> Supervisor
+    Analyst -- "aporta análisis" --> Supervisor
+```
+
+`researcher` busca en la base vectorial de los Módulos 3/4 (ChromaDB, Ley
+21.442); `analyst` no tiene acceso a esa base y solo procesa datos que ya le
+llegaron en la instrucción (sentimiento léxico o cálculos aritméticos). El
+Supervisor nunca ejecuta trabajo de dominio: solo lee los aportes acumulados
+y decide.
+
+### Estado compartido y cómo se evita perder contexto
+
+`orchestrator/state.py` define `OrchestratorState(MessagesState)` con:
+
+- `contributions: Annotated[list[AgentContribution], operator.add]` — cada
+  especialista solo devuelve su propio aporte (`{"agent": ..., "summary":
+  ...}`); el reducer los acumula sin que un nodo tenga que leer ni reescribir
+  el aporte de otro. Así el Supervisor sabe en cualquier paso qué agente ya
+  contribuyó qué, sin depender del orden de llegada ni perder aportes en los
+  saltos asíncronos entre nodos.
+- `next_agent`, `instruction`, `task_completed`, `step_count` — se
+  reemplazan en cada turno del Supervisor porque describen su decisión
+  *actual*, no un historial.
+
+### Cómo se evita la contaminación de contexto
+
+Cada especialista corre su propio ciclo ReAct (`orchestrator/agents/_shared.py`,
+el mismo patrón modelo→herramientas→modelo del Módulo 5) sobre una
+`MessagesState` **aislada**: recibe únicamente `state["instruction"]` (la
+instrucción puntual que le asignó el Supervisor), nunca el historial completo
+del orquestador ni los mensajes internos de tool-calling del otro
+especialista. El propio Supervisor tampoco ve esos mensajes internos: solo ve
+el resumen final de cada aporte (`format_contributions` en
+`orchestrator/supervisor.py`), nunca la traza cruda de llamadas a
+herramientas.
+
+### Cómo se evita el "Supervisor infinito"
+
+`OrchestratorSettings.max_steps` (`ORCHESTRATOR_MAX_STEPS`, por defecto 6)
+pone un techo duro a los turnos del Supervisor. Si se alcanza sin que decida
+`"end"`, el nodo sintetiza una respuesta de mejor esfuerzo con los aportes
+recopilados hasta ese punto (`synthesize_fallback`) y fuerza el fin — nunca
+se llama al modelo una vez superado el techo. Además, el prompt del
+Supervisor trae una rúbrica de suficiencia explícita que le prohíbe reenviar
+la misma tarea ya cumplida al mismo especialista.
+
+Componentes:
+
+- `orchestrator/state.py`: `OrchestratorState` y `AgentContribution`;
+- `orchestrator/agents/research_agent.py`: tool `buscar_en_base_conocimiento`
+  sobre el retriever Chroma del Módulo 3, inyectado por dependencia (no un
+  singleton global) para poder probarlo con un doble;
+- `orchestrator/agents/analyst_agent.py`: tools `analizar_sentimiento`
+  (léxico, determinista) y `calcular_expresion` (evaluador aritmético propio
+  basado en `ast`, sin `eval`);
+- `orchestrator/agents/_shared.py`: ciclo ReAct reutilizable por ambos
+  especialistas;
+- `orchestrator/supervisor.py`: prompt, `SupervisorDecision` (Pydantic),
+  rúbrica de suficiencia, techo de pasos y la arista condicional
+  `route_supervisor`;
+- `orchestrator/graph.py`: ensambla el `StateGraph` jerárquico;
+- `orchestrator/runner.py`: fachada `run_orchestrator()` y `OrchestratorResult`;
+- `orchestrator/cli.py` / `__main__.py`: CLI de una consulta;
+- `demo_orchestrator.py`: dos solicitudes que fuerzan researcher → analyst → end;
+- `tests/test_orchestrator.py`: ruteo completo con dobles deterministas,
+  techo de pasos, tools de análisis y tool de búsqueda — todo offline.
+
+Configuración:
+
+```dotenv
+ORCHESTRATOR_MODEL=openrouter/free
+ORCHESTRATOR_TEMPERATURE=0
+ORCHESTRATOR_MAX_STEPS=6
+```
+
+### Ejecutar la demo de delegación
+
+Requiere el índice de Chroma del Módulo 3 ya construido (`python ingest.py`)
+y `OPENROUTER_API_KEY` configurada:
+
+```bash
+python demo_orchestrator.py
+```
+
+```bash
+python -m orchestrator "Busca qué dice el reglamento sobre gastos comunes y calcula 3 cuotas de 45000" --trace traces/orchestrator-demo.json
+```
+
+La salida imprime la respuesta final del Supervisor, la cantidad de pasos
+usados y la lista de aportes trazados por agente — evidencia directa de la
+delegación researcher → analyst → end.
+
 ## Estructura del repositorio
 
 ```text
@@ -285,6 +404,17 @@ ejemplo versionado prueba dos invocaciones antes de la conclusión.
 │   ├── retriever.py       # clase RAGSystem y EnsembleRetriever
 │   └── evaluation.py      # Precision@k y Recall@k
 ├── cyclic_agent/          # Módulo 5: grafo, tools, SQLite, CLI y trazas
+├── orchestrator/          # Módulo 6: Supervisor, especialistas y grafo jerárquico
+│   ├── state.py           # OrchestratorState y AgentContribution
+│   ├── supervisor.py      # rúbrica, techo de pasos y arista condicional
+│   ├── graph.py           # StateGraph jerárquico
+│   ├── runner.py          # fachada run_orchestrator()
+│   ├── cli.py / __main__.py
+│   └── agents/
+│       ├── research_agent.py  # tool sobre el retriever Chroma del Módulo 3
+│       ├── analyst_agent.py   # tools de sentimiento y cálculo
+│       └── _shared.py         # ciclo ReAct reutilizable
+├── demo_orchestrator.py   # demo de delegación researcher -> analyst -> end
 ├── examples/
 │   └── react_trace.json   # ciclo modelo -> tool -> modelo -> tool -> respuesta
 ├── data/                  # dataset técnico/legal incluido
@@ -293,9 +423,10 @@ ejemplo versionado prueba dos invocaciones antes de la conclusión.
 ├── init_pinecone.py
 ├── ingest_pinecone.py
 ├── evaluate.py
-├── schemas.py             # contratos Pydantic de los módulos 1, 2 y 3
+├── schemas.py             # contratos Pydantic de los módulos 1, 2, 3 y 6
 ├── tests/test_cloud_rag.py
 ├── tests/test_cyclic_agent.py
+├── tests/test_orchestrator.py
 ├── pyproject.toml         # Python >=3.12, Ruff y mypy estricto
 ├── requirements.txt
 └── .env.example
@@ -502,6 +633,9 @@ Controles cubiertos:
   y métricas;
 - Módulo 5 — `tests/test_cyclic_agent.py`: dos tool calls, retorno/reintento,
   traza JSON, memoria por `thread_id` y aislamiento entre sesiones;
+- Módulo 6 — `tests/test_orchestrator.py`: ruteo Supervisor -> researcher ->
+  analyst -> end con dobles deterministas, techo de pasos que corta el
+  Supervisor infinito, evaluador aritmético y tool de búsqueda vectorial;
 - loaders de Markdown y JSON con metadata enriquecida;
 - chunking de 650/80 tokens e IDs citables;
 - detección de mismatch de dimensiones antes del upsert;

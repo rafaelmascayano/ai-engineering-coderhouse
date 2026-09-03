@@ -1,7 +1,7 @@
 [project]
 name = "ai-engineering-coderhouse"
-version = "0.5.0"
-description = "Entregas acumulativas de AI Engineering, incluido un agente cíclico persistente."
+version = "0.6.0"
+description = "Entregas acumulativas de AI Engineering, incluido un orquestador multi-agente jerárquico."
 requires-python = ">=3.12"
 
 [tool.ruff]
