@@ -1,4 +1,4 @@
-# AI Engineering: entrega acumulativa — Módulos 1 a 6
+# AI Engineering: entrega acumulativa — Módulos 1 a 7
 
 Este repositorio reúne las seis pre-entregas del curso en una evolución
 progresiva: comienza con clientes LLM intercambiables, agrega procesamiento
