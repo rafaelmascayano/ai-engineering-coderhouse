@@ -20,11 +20,12 @@ Inmobiliaria, organizada en cuatro documentos temáticos dentro de `data/`.
 | 4 | Escalar y evaluar la recuperación | Pinecone Serverless, namespaces, BM25 + vectores y Precision@5/Recall@5 | `python init_pinecone.py`, `python ingest_pinecone.py` y `python evaluate.py` |
 | 5 | Razonar, usar herramientas y recordar sesiones | `StateGraph`, `MessagesState`, `ToolNode`, `tools_condition` y `AsyncSqliteSaver` | `python -m cyclic_agent "..." --thread-id demo` |
 | 6 | Orquestar especialistas bajo un Supervisor | `StateGraph` jerárquico, aristas condicionales, estado compartido con aportes trazables y techo de pasos | `python demo_orchestrator.py` |
+| 7 | Exponer el orquestador como API de producción | FastAPI asíncrona, cola en background, `AsyncRedisSaver`, pausa Human-in-the-loop con `interrupt()` y trazas a LangSmith/Phoenix | `uvicorn app.main:app --reload` |
 
 ```text
-Módulo 1       Módulo 2       Módulo 3       Módulo 4       Módulo 5       Módulo 6
-clientes LLM -> LCEL estruct. -> RAG local  -> RAG cloud  -> agente ReAct -> orquestador
-Factory/async   Pydantic         ChromaDB       Pinecone      SQLite/thread  Supervisor
+Módulo 1       Módulo 2       Módulo 3       Módulo 4       Módulo 5       Módulo 6       Módulo 7
+clientes LLM -> LCEL estruct. -> RAG local  -> RAG cloud  -> agente ReAct -> orquestador -> API + HITL
+Factory/async   Pydantic         ChromaDB       Pinecone      SQLite/thread  Supervisor     Redis/trazas
 ```
 
 ## Módulo 1 — Clientes LLM multi-proveedor
@@ -384,6 +385,162 @@ La salida imprime la respuesta final del Supervisor, la cantidad de pasos
 usados y la lista de aportes trazados por agente — evidencia directa de la
 delegación researcher → analyst → end.
 
+## Módulo 7 — API de producción y monitoreo activo
+
+El séptimo módulo expone el orquestador del Módulo 6 detrás de una API
+FastAPI asíncrona con estado persistido en Redis, una pausa
+Human-in-the-loop obligatoria antes de delegar en el especialista de mayor
+costo, y trazas activas hacia LangSmith o Arize Phoenix.
+
+### Por qué asíncrono y por qué Redis
+
+Un endpoint que llama al LLM de forma síncrona bloquea el event loop de
+FastAPI: mientras el Supervisor y los especialistas conversan (varios
+segundos, varias llamadas), ningún otro request se atiende. Por eso `POST
+/tasks` no ejecuta el grafo: crea un registro en Redis y agenda su ejecución
+como `BackgroundTask` (una tarea `asyncio`, no un hilo), devolviendo el
+`job_id` de inmediato. El cliente hace polling sobre `GET /tasks/{job_id}`.
+
+Redis cumple dos roles distintos, deliberadamente separados:
+
+- **Estado observable del job** (`app/jobs.py`, `JobStore`): el ciclo de vida
+  que ve el cliente HTTP -- `PENDING -> RUNNING -> (WAITING_APPROVAL) ->
+  DONE|FAILED|REJECTED` -- con TTL, para que `GET /tasks/{job_id}` nunca
+  dependa de que el proceso siga vivo.
+- **Checkpoints de LangGraph** (`AsyncRedisSaver`, en `app/main.py`): el
+  estado *interno* del grafo (mensajes, aportes, `step_count`), indexado por
+  `thread_id = job_id`, necesario para que `interrupt()` pueda suspender la
+  ejecución y reanudarla exactamente donde quedó, incluso tras un reinicio
+  del proceso. Requiere una imagen de Redis con RedisJSON + RediSearch
+  (`redis/redis-stack-server`, ya declarada en `docker-compose.yml`); un
+  Redis "pelado" no alcanza para el checkpointer, aunque sí para `JobStore`.
+
+### Grafo con pausa Human-in-the-loop
+
+```mermaid
+graph TD
+    START([START]) --> Supervisor
+    Supervisor -- "next=researcher" --> Researcher[researcher]
+    Supervisor -- "next=analyst" --> HITL[human_approval]
+    Supervisor -- "next=end" --> END([END])
+    HITL -- "aprobado" --> Analyst[analyst]
+    HITL -- "rechazado" --> END
+    Researcher --> Supervisor
+    Analyst --> Supervisor
+```
+
+`analyst` es, en este sistema, el especialista con "costo": ejecuta
+`calcular_expresion`, cuyo resultado puede respaldar una decisión financiera
+(p. ej. una deuda de gastos comunes). Por eso el Supervisor nunca delega en
+`analyst` directamente: siempre pasa antes por `human_approval`
+(`app/hitl.py`), que llama a `interrupt()` de LangGraph. `interrupt()`
+suspende la ejecución del grafo -persistiendo el estado en el
+checkpointer- y su valor de retorno solo llega cuando alguien reanuda con
+`POST /tasks/{job_id}/approve`. Un rechazo nunca llega a ejecutar la
+herramienta: corta directo a `END` con un mensaje trazable.
+
+### Manejo de errores en background
+
+Si el grafo lanza una excepción durante `run_job`/`resume_job`
+(`app/worker.py`), se captura y el job pasa a `FAILED` con el mensaje de
+error en Redis -- de lo contrario, el cliente quedaría haciendo polling para
+siempre sobre un job que nunca va a progresar.
+
+### Observabilidad
+
+`app/observability.py` activa, según `OBSERVABILITY_PROVIDER`:
+
+- **LangSmith** (`langsmith`): setea `LANGCHAIN_TRACING_V2`/`LANGCHAIN_PROJECT`
+  antes de construir el grafo. LangChain traza automáticamente cada nodo del
+  `StateGraph`, cada llamada al `ChatOpenAI` de cada especialista y cada tool
+  call -- no hace falta decorar nada a mano.
+- **Arize Phoenix** (`phoenix`): inicializa el colector OpenTelemetry
+  (`phoenix.otel.register`) e instrumenta LangChain con
+  `openinference-instrumentation-langchain`, con el mismo efecto.
+
+Componentes:
+
+- `app/main.py`: FastAPI, `lifespan` (arma Redis, `AsyncRedisSaver`, el
+  grafo y la observabilidad una sola vez), `POST /tasks`, `GET
+  /tasks/{job_id}`, `POST /tasks/{job_id}/approve`, `GET /health`;
+- `app/graph.py`: ensambla el grafo del Módulo 6 + `human_approval`, con los
+  tres modelos inyectables (igual que `orchestrator.runner.run_orchestrator`)
+  para poder probarlo sin API key;
+- `app/worker.py`: patrón worker -- corre el grafo, traduce
+  `__interrupt__`/la respuesta final al estado del job, y captura
+  excepciones como `FAILED`;
+- `app/jobs.py`: `JobStore`, el estado observable por el cliente en Redis;
+- `app/hitl.py`: el nodo `human_approval` y su arista condicional;
+- `app/observability.py`: inicialización de LangSmith/Phoenix;
+- `app/config.py`: `APISettings` (`REDIS_URL`, TTL, agentes críticos);
+- `scripts/load_test.py`: dispara 5 peticiones concurrentes y hace polling
+  de cada una hasta que termina;
+- `tests/test_module7_api.py`: pausa/reanudación HITL (aprobado y
+  rechazado) y ruta sin pausa con `InMemorySaver` y dobles deterministas;
+  ciclo de vida de `JobStore` y `FAILED`/`WAITING_APPROVAL` del worker contra
+  Redis real (sin red, sin API key).
+
+### Levantar Redis + la API
+
+Con Docker (recomendado -- ya incluye Redis Stack, necesario para el
+checkpointer):
+
+```bash
+cp .env.example .env   # completar OPENROUTER_API_KEY y LANGCHAIN_API_KEY
+docker compose up --build
+```
+
+Sin Docker, con Redis Stack instalado localmente:
+
+```bash
+redis-stack-server --port 6379 &
+uvicorn app.main:app --reload
+```
+
+### Probar el flujo completo
+
+```bash
+# 1. Encolar una tarea que dispara la pausa HITL (menciona un cálculo)
+curl -s -X POST http://localhost:8000/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"request": "Busca los gastos comunes y calcula 3 cuotas de 45000."}'
+# -> {"job_id": "...", "status": "PENDING"}
+
+# 2. Poll: pasa a WAITING_APPROVAL con el motivo en pending_approval
+curl -s http://localhost:8000/tasks/<job_id>
+
+# 3. Aprobar (o {"approved": false} para rechazar)
+curl -s -X POST http://localhost:8000/tasks/<job_id>/approve \
+  -H "Content-Type: application/json" \
+  -d '{"approved": true}'
+
+# 4. Poll de nuevo: DONE con la respuesta final, pasos y aportes
+curl -s http://localhost:8000/tasks/<job_id>
+```
+
+### Prueba de carga (5 peticiones concurrentes)
+
+```bash
+python scripts/load_test.py --url http://localhost:8000 --concurrency 5
+```
+
+El script imprime la latencia de cada petición y el total pared-reloj. El
+costo por ejecución y la latencia p95 "reales" (calculados por la
+plataforma a partir de tokens de entrada/salida) se leen del dashboard de
+LangSmith o Phoenix para esa misma corrida -- ver `screenshots/`.
+
+Configuración:
+
+```dotenv
+REDIS_URL=redis://localhost:6379/0
+API_JOB_TTL_SECONDS=86400
+API_CRITICAL_AGENTS=analyst
+OBSERVABILITY_PROVIDER=langsmith
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=
+LANGCHAIN_PROJECT=orchestrator-module7
+```
+
 ## Estructura del repositorio
 
 ```text
@@ -415,6 +572,19 @@ delegación researcher → analyst → end.
 │       ├── analyst_agent.py   # tools de sentimiento y cálculo
 │       └── _shared.py         # ciclo ReAct reutilizable
 ├── demo_orchestrator.py   # demo de delegación researcher -> analyst -> end
+├── app/                   # Módulo 7: API FastAPI, Redis, HITL y trazas
+│   ├── main.py             # FastAPI, lifespan, POST/GET /tasks, /approve
+│   ├── graph.py             # grafo del Módulo 6 + nodo human_approval
+│   ├── worker.py             # patrón worker: corre el grafo, sincroniza Redis
+│   ├── jobs.py                # JobStore: estado observable del job en Redis
+│   ├── hitl.py                  # nodo de aprobación humana (interrupt())
+│   ├── observability.py          # init de LangSmith / Arize Phoenix
+│   └── config.py                  # APISettings (REDIS_URL, TTL, etc.)
+├── scripts/
+│   └── load_test.py       # 5 peticiones concurrentes contra la API
+├── screenshots/            # capturas del dashboard de trazas (Módulo 7)
+├── Dockerfile
+├── docker-compose.yml       # api + redis/redis-stack-server
 ├── examples/
 │   └── react_trace.json   # ciclo modelo -> tool -> modelo -> tool -> respuesta
 ├── data/                  # dataset técnico/legal incluido
@@ -439,6 +609,9 @@ delegación researcher → analyst → end.
 - Una API key de OpenRouter. El embedding predeterminado es gratuito.
 - El agente del módulo 5 reutiliza la misma API key de OpenRouter. Sus pruebas
   son offline y no consumen API.
+- Módulo 7: Docker (para `docker compose up`, que trae Redis Stack) o, en su
+  defecto, un binario local de `redis-stack-server`; y una cuenta de
+  LangSmith o de Arize Phoenix para ver las trazas.
 
 ```bash
 python3 -m venv .venv
@@ -636,6 +809,10 @@ Controles cubiertos:
 - Módulo 6 — `tests/test_orchestrator.py`: ruteo Supervisor -> researcher ->
   analyst -> end con dobles deterministas, techo de pasos que corta el
   Supervisor infinito, evaluador aritmético y tool de búsqueda vectorial;
+- Módulo 7 — `tests/test_module7_api.py`: pausa/reanudación HITL (aprobada y
+  rechazada) y ruta sin pausa con `InMemorySaver`; ciclo de vida de
+  `JobStore` y transición a `FAILED`/`WAITING_APPROVAL` del worker contra
+  Redis real en `localhost:6379` (se salta sola si Redis no está disponible);
 - loaders de Markdown y JSON con metadata enriquecida;
 - chunking de 650/80 tokens e IDs citables;
 - detección de mismatch de dimensiones antes del upsert;
