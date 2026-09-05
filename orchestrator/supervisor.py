@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Literal, Protocol
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.state import AgentContribution, NextAgent, OrchestratorState
 from schemas import TextoNoVacio
+
+logger = logging.getLogger(__name__)
+
+_MAX_DECISION_ATTEMPTS = 3
 
 SUPERVISOR_SYSTEM_PROMPT = """Eres el Supervisor de un equipo con dos especialistas:
 
@@ -103,6 +109,51 @@ def synthesize_fallback(contributions: list[AgentContribution]) -> str:
     )
 
 
+async def _decide(
+    model: SupervisorChatModel, base_messages: list[BaseMessage]
+) -> SupervisorDecision:
+    """Llama al modelo y reintenta si no devuelve JSON parseable.
+
+    `openrouter/free` enruta cada llamada a un modelo gratuito distinto, y
+    alguno ocasionalmente devuelve texto de scaffolding (p. ej. un aviso de
+    moderación) en vez del JSON pedido. Es una falla transitoria del
+    proveedor, no del prompt, así que reintentar con el mismo pedido suele
+    alcanzar; si insiste, se agrega un recordatorio explícito.
+    """
+
+    messages = list(base_messages)
+    last_error: OutputParserException | None = None
+
+    for attempt in range(1, _MAX_DECISION_ATTEMPTS + 1):
+        response = await model.ainvoke(messages)
+        raw_content = str(response.content)
+        try:
+            return _PARSER.parse(raw_content)
+        except OutputParserException as error:
+            last_error = error
+            logger.warning(
+                "Supervisor: salida no parseable en el intento %s/%s: %r",
+                attempt,
+                _MAX_DECISION_ATTEMPTS,
+                raw_content,
+            )
+            messages = [
+                *base_messages,
+                HumanMessage(
+                    content=(
+                        "Tu respuesta anterior no era JSON válido según el "
+                        "formato pedido. Respondé ÚNICAMENTE con el objeto "
+                        "JSON, sin ningún texto antes o después."
+                    )
+                ),
+            ]
+
+    raise RuntimeError(
+        "El Supervisor no devolvió una decisión JSON válida tras "
+        f"{_MAX_DECISION_ATTEMPTS} intentos (proveedor del modelo inestable)"
+    ) from last_error
+
+
 def build_supervisor_node(
     model: SupervisorChatModel, *, max_steps: int
 ) -> Callable[[OrchestratorState], Awaitable[dict[str, Any]]]:
@@ -128,13 +179,13 @@ def build_supervisor_node(
             contributions=format_contributions(contributions),
             format_instructions=_PARSER.get_format_instructions(),
         )
-        response = await model.ainvoke(
+        decision = await _decide(
+            model,
             [
                 SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT),
                 HumanMessage(content=prompt),
-            ]
+            ],
         )
-        decision = _PARSER.parse(str(response.content))
 
         update: dict[str, Any] = {
             "next_agent": decision.next,
