@@ -365,3 +365,46 @@ def test_refinement_preserves_evidence_and_isolates_specialist_context() -> None
         assert "positivo" in final_context
 
     asyncio.run(scenario())
+
+
+class FlakySupervisorModel:
+    """Doble que reproduce a `openrouter/free` devolviendo basura antes del JSON."""
+
+    def __init__(self, replies: Sequence[str]) -> None:
+        self._replies = list(replies)
+
+    async def ainvoke(self, messages: list[BaseMessage]) -> AIMessage:
+        return AIMessage(content=self._replies.pop(0))
+
+
+def _initial_supervisor_state(request_text: str) -> dict[str, Any]:
+    return {
+        "messages": [HumanMessage(content=request_text)],
+        "contributions": [],
+        "step_count": 0,
+    }
+
+
+def test_supervisor_retries_after_unparseable_output() -> None:
+    async def scenario() -> None:
+        good_decision = json.dumps({"next": "researcher", "instruction": "busca algo"})
+        model = FlakySupervisorModel(["User Safety: safe", good_decision])
+        node = build_supervisor_node(model, max_steps=6)
+
+        update = await node(_initial_supervisor_state("pregunta"))
+
+        assert update["next_agent"] == "researcher"
+        assert update["instruction"] == "busca algo"
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_raises_after_exhausting_retries() -> None:
+    async def scenario() -> None:
+        model = FlakySupervisorModel(["basura 1", "basura 2", "basura 3"])
+        node = build_supervisor_node(model, max_steps=6)
+
+        with pytest.raises(RuntimeError):
+            await node(_initial_supervisor_state("pregunta"))
+
+    asyncio.run(scenario())

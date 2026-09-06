@@ -1,16 +1,33 @@
 # AI Engineering: entrega acumulativa — Módulos 1 a 7
 
-Este repositorio reúne las seis pre-entregas del curso en una evolución
+Este repositorio reúne las siete pre-entregas del curso en una evolución
 progresiva: comienza con clientes LLM intercambiables, agrega procesamiento
 estructurado con LangChain, construye un RAG local, migra la recuperación a
 Pinecone Serverless, agrega un agente ReAct cíclico con memoria SQLite y
-culmina con un orquestador multi-agente jerárquico que reutiliza ese RAG
-local como base de conocimiento de un especialista.
+incorpora un orquestador multi-agente jerárquico que reutiliza ese RAG
+local y lo expone como API asíncrona con Redis, aprobación humana y monitoreo.
 
 El corpus de los módulos 3 y 4 es la Ley chilena N.º 21.442 de Copropiedad
 Inmobiliaria, organizada en cuatro documentos temáticos dentro de `data/`.
 
-## Resumen de los seis módulos
+## Ramas y entregas
+
+| Rama | Uso |
+| --- | --- |
+| [`main`](https://github.com/rafaelmascayano/ai-engineering-coderhouse/tree/main) | Versión acumulativa: módulos 1 a 7, correcciones de la 6 y capturas de la 7. Base para trabajo nuevo. |
+| [`module-6`](https://github.com/rafaelmascayano/ai-engineering-coderhouse/tree/module-6) | Preentrega 6 independiente, con su notebook ejecutado. Usa este enlace para entregar la 6. |
+| [`module-7`](https://github.com/rafaelmascayano/ai-engineering-coderhouse/tree/module-7) | Versión histórica de la preentrega 7, conservada con sus capturas. |
+| `module-2`, `module-3`, `module-5` | Versiones históricas de entregas anteriores. |
+
+Las ramas `module-N` conservan las entregas; no se usan para desarrollar la
+siguiente. Para cambios nuevos, crea una rama `codex/...` desde `main`, abre
+un PR hacia `main` y elimina la rama de trabajo cuando quede integrada.
+
+El notebook también está disponible en [`demo_orchestrator.ipynb`](demo_orchestrator.ipynb).
+Las capturas originales de la 7 están en [`screenshoots/`](screenshoots/),
+conservando los nombres de archivo de esa entrega.
+
+## Resumen de los siete módulos
 
 | Módulo | Objetivo | Implementación principal | Ejecución |
 | --- | --- | --- | --- |
