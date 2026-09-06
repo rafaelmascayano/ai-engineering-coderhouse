@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 from langchain_core.documents import Document
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_core.tools import BaseTool
 
@@ -21,6 +21,7 @@ from orchestrator.agents.analyst_agent import (
 from orchestrator.agents.research_agent import make_knowledge_search_tool
 from orchestrator.config import OrchestratorSettings
 from orchestrator.runner import run_orchestrator
+from orchestrator.supervisor import build_supervisor_node
 
 
 class ScriptedSupervisorModel:
@@ -193,5 +194,174 @@ def test_knowledge_search_tool_reports_not_found_without_documents() -> None:
         found = await tool_with_hits.ainvoke({"consulta": "algo"})
         assert found["status"] == "ok"
         assert found["resultados"][0]["fuente"] == "a.txt"
+
+    asyncio.run(scenario())
+
+
+class RecordingSupervisorModel:
+    def __init__(self, replies: Sequence[str]) -> None:
+        self.replies = list(replies)
+        self.calls: list[list[BaseMessage]] = []
+
+    async def ainvoke(self, messages: list[BaseMessage]) -> AIMessage:
+        self.calls.append(list(messages))
+        return AIMessage(content=self.replies.pop(0))
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "Respuesta sin JSON",
+        '{"next": "unknown", "instruction": "busca"}',
+        '{"next": "researcher", "instruction": ""}',
+    ],
+)
+def test_supervisor_retries_invalid_decision_preserving_context(invalid: str) -> None:
+    async def scenario() -> None:
+        model = RecordingSupervisorModel(
+            [
+                invalid,
+                json.dumps({"next": "analyst", "instruction": "calcula 45000*3"}),
+            ]
+        )
+        node = build_supervisor_node(model, max_steps=6)
+        update = await node(
+            {
+                "messages": [HumanMessage(content="consulta original")],
+                "contributions": [
+                    {"agent": "researcher", "summary": "evidencia previa"}
+                ],
+                "step_count": 1,
+            }
+        )
+        assert update["next_agent"] == "analyst"
+        assert update["step_count"] == 2
+        assert len(model.calls) == 2
+        assert model.calls[1][:2] == model.calls[0]
+        assert "consulta original" in str(model.calls[1][1].content)
+        assert "evidencia previa" in str(model.calls[1][1].content)
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_stops_after_three_invalid_decisions() -> None:
+    async def scenario() -> None:
+        model = RecordingSupervisorModel(["invalid"] * 4)
+        node = build_supervisor_node(model, max_steps=6)
+        with pytest.raises(RuntimeError, match="3 intentos"):
+            await node(
+                {
+                    "messages": [HumanMessage(content="consulta")],
+                    "contributions": [],
+                    "step_count": 0,
+                }
+            )
+        assert len(model.calls) == 3
+        assert len(model.replies) == 1
+
+    asyncio.run(scenario())
+
+
+def test_refinement_preserves_evidence_and_isolates_specialist_context() -> None:
+    class EvidenceResearcher:
+        def __init__(self) -> None:
+            self.instructions: list[str] = []
+
+        def bind_tools(self, tools: Sequence[BaseTool]) -> Runnable:
+            async def respond(messages: list[BaseMessage]) -> AIMessage:
+                instruction = str(messages[1].content)
+                observations = [m for m in messages if isinstance(m, ToolMessage)]
+                if not observations:
+                    assert len(messages) == 2  # sistema + instrucción, sin historial
+                    self.instructions.append(instruction)
+                    return AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "buscar_en_base_conocimiento",
+                                "args": {"consulta": instruction},
+                                "id": "research-call",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                return AIMessage(content=str(observations[-1].content))
+
+            return RunnableLambda(respond)
+
+    class EvidenceAnalyst:
+        def bind_tools(self, tools: Sequence[BaseTool]) -> Runnable:
+            async def respond(messages: list[BaseMessage]) -> AIMessage:
+                observations = [m for m in messages if isinstance(m, ToolMessage)]
+                if not observations:
+                    assert len(messages) == 2
+                    assert "garantiza seguridad" in str(messages[1].content)
+                    assert "fuente.txt" in str(messages[1].content)
+                    assert "not_found" not in str(messages[1].content)
+                    return AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "analizar_sentimiento",
+                                "args": {"texto": "garantiza seguridad"},
+                                "id": "analysis-call",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                return AIMessage(content=str(observations[-1].content))
+
+            return RunnableLambda(respond)
+
+    async def scenario() -> None:
+        async def retrieve(query: str) -> list[Document]:
+            if query == "busca con fuente":
+                return [
+                    Document(
+                        page_content="garantiza seguridad",
+                        metadata={"source": "fuente.txt"},
+                    )
+                ]
+            return []
+
+        supervisor = RecordingSupervisorModel(
+            [
+                json.dumps(d)
+                for d in [
+                    {"next": "researcher", "instruction": "busca"},
+                    {"next": "researcher", "instruction": "busca con fuente"},
+                    {
+                        "next": "analyst",
+                        "instruction": "Tono: garantiza seguridad (fuente.txt)",
+                    },
+                    {
+                        "next": "end",
+                        "instruction": "fuente.txt: tono positivo según el léxico.",
+                    },
+                ]
+            ]
+        )
+        researcher = EvidenceResearcher()
+        result = await run_orchestrator(
+            "Investiga y analiza el tono",
+            settings=OrchestratorSettings(max_steps=6),
+            supervisor_model=supervisor,
+            researcher_model=researcher,
+            analyst_model=EvidenceAnalyst(),
+            retriever=RunnableLambda(retrieve),
+        )
+        assert result.steps == 4
+        assert [c["agent"] for c in result.contributions] == [
+            "researcher",
+            "researcher",
+            "analyst",
+        ]
+        assert "not_found" in result.contributions[0]["summary"]
+        assert "fuente.txt" in result.contributions[1]["summary"]
+        assert '"etiqueta": "positivo"' in result.contributions[2]["summary"]
+        assert researcher.instructions == ["busca", "busca con fuente"]
+        final_context = str(supervisor.calls[-1][1].content)
+        assert "not_found" in final_context and "fuente.txt" in final_context
+        assert "positivo" in final_context
 
     asyncio.run(scenario())

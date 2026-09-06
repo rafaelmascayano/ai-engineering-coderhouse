@@ -10,7 +10,7 @@ local como base de conocimiento de un especialista.
 El corpus de los módulos 3 y 4 es la Ley chilena N.º 21.442 de Copropiedad
 Inmobiliaria, organizada en cuatro documentos temáticos dentro de `data/`.
 
-## Resumen de los cinco módulos
+## Resumen de los seis módulos
 
 | Módulo | Objetivo | Implementación principal | Ejecución |
 | --- | --- | --- | --- |
@@ -270,6 +270,9 @@ ejemplo versionado prueba dos invocaciones antes de la conclusión.
 
 ## Módulo 6 — Orquestador multi-agente jerárquico
 
+Entrega específica: [rama `module-6`](https://github.com/rafaelmascayano/ai-engineering-coderhouse/tree/module-6)
+y [notebook ejecutado](demo_orchestrator.ipynb).
+
 El sexto módulo implementa un orquestador de **topología jerárquica**: un
 nodo `Supervisor` decide en cada turno a qué especialista delegar (o si ya
 puede finalizar), y cada especialista solo hace una cosa. No hay malla de
@@ -355,7 +358,7 @@ Componentes:
 - `orchestrator/graph.py`: ensambla el `StateGraph` jerárquico;
 - `orchestrator/runner.py`: fachada `run_orchestrator()` y `OrchestratorResult`;
 - `orchestrator/cli.py` / `__main__.py`: CLI de una consulta;
-- `demo_orchestrator.py`: dos solicitudes que fuerzan researcher → analyst → end;
+- `demo_orchestrator.py`: dos solicitudes que requieren investigación y análisis;
 - `tests/test_orchestrator.py`: ruteo completo con dobles deterministas,
   techo de pasos, tools de análisis y tool de búsqueda — todo offline.
 
@@ -367,7 +370,49 @@ ORCHESTRATOR_TEMPERATURE=0
 ORCHESTRATOR_MAX_STEPS=6
 ```
 
-### Ejecutar la demo de delegación
+### Validación, refinamiento y conflictos
+
+El Supervisor valida con su rúbrica la evidencia y fuente del investigador y
+la correspondencia entre los datos recibidos y el análisis solicitado. La
+presencia de un aporte por sí sola no basta: si está incompleto, devuelve una
+instrucción específica al especialista para corregirlo. Al analista se le
+entregan explícitamente el fragmento o los datos y su fuente.
+
+Si los aportes se contradicen, el Supervisor pide verificar la fuente al
+investigador o repetir el cálculo al analista. Conserva ambos aportes en el
+estado y utiliza la corrección respaldada por evidencia, sin votar ni aceptar
+automáticamente el último mensaje. Si el conflicto persiste, debe indicar la
+limitación en la respuesta. Esta validación semántica depende del modelo y su
+prompt; Pydantic valida el formato de la decisión, no la veracidad del contenido.
+
+Una decisión con JSON inválido, ruta desconocida o instrucción vacía se
+reintenta hasta tres veces conservando el contexto original. Si no se obtiene
+una decisión válida, se informa un error explícito. El techo de pasos del
+Supervisor sigue limitando las rondas de delegación y refinamiento.
+
+### Notebook de entrega (ejecutado, sin claves)
+
+Abre [demo_orchestrator.ipynb](demo_orchestrator.ipynb). Incluye el flujo normal
+`Supervisor → researcher → Supervisor → analyst → Supervisor → END` y una
+segunda ejecución donde la búsqueda inicial no encuentra evidencia y el
+Supervisor pide refinarla antes de analizar y sintetizar.
+
+Se ejecutan el `StateGraph`, las herramientas y la acumulación de estado del
+proyecto. Los modelos son dobles deterministas y la recuperación es una
+búsqueda local simulada sobre un fragmento del corpus incluido: no es una
+demostración de autonomía de un LLM real ni requiere OpenRouter o ChromaDB.
+Las salidas guardadas muestran las delegaciones, los resultados de las
+herramientas y la síntesis; las comprobaciones verifican que el analista
+procesa el fragmento realmente recuperado.
+
+Para volver a ejecutarlo, desde la raíz del repositorio y con el entorno activo:
+
+```bash
+python -m pip install -r requirements-notebook.txt
+python -m jupyter nbconvert --execute --to notebook --inplace demo_orchestrator.ipynb
+```
+
+### Ejecutar la demo de delegación con modelo real
 
 Requiere el índice de Chroma del Módulo 3 ya construido (`python ingest.py`)
 y `OPENROUTER_API_KEY` configurada:
@@ -414,7 +459,9 @@ delegación researcher → analyst → end.
 │       ├── research_agent.py  # tool sobre el retriever Chroma del Módulo 3
 │       ├── analyst_agent.py   # tools de sentimiento y cálculo
 │       └── _shared.py         # ciclo ReAct reutilizable
-├── demo_orchestrator.py   # demo de delegación researcher -> analyst -> end
+├── demo_orchestrator.py   # demo con modelo real
+├── demo_orchestrator.ipynb # demo offline ejecutada, delegación y refinamiento
+├── requirements-notebook.txt # dependencias opcionales para el notebook
 ├── examples/
 │   └── react_trace.json   # ciclo modelo -> tool -> modelo -> tool -> respuesta
 ├── data/                  # dataset técnico/legal incluido
@@ -644,7 +691,13 @@ Controles cubiertos:
 - fórmulas de Precision@5 y Recall@5;
 - pruebas previas del proyecto con ChromaDB y clientes LLM.
 
-Estado verificado: **49 pruebas aprobadas**, **ruff y mypy sin errores**, índice
+Verificación de esta revisión del Módulo 6: **60 pruebas offline aprobadas**,
+**Ruff sin errores**, **mypy cyclic_agent sin errores** y notebook ejecutado
+completo con delegación y refinamiento. La demo con LLM real no se ejecutó
+como parte de esta verificación.
+
+Registro histórico de módulos anteriores: **49 pruebas aprobadas**,
+**ruff y mypy sin errores**, índice
 Serverless de 2048 dimensiones creado, **121 chunks ingeridos** y las cinco
 consultas cloud evaluadas. Nemotron se consumió mediante su variante gratuita
 de OpenRouter; Pinecone sigue sujeto a los límites del plan de la cuenta.
