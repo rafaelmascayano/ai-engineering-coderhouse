@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Literal, Protocol
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.state import AgentContribution, NextAgent, OrchestratorState
 from schemas import TextoNoVacio
+
+logger = logging.getLogger(__name__)
+
+_MAX_DECISION_ATTEMPTS = 3
 
 SUPERVISOR_SYSTEM_PROMPT = """Eres el Supervisor de un equipo con dos especialistas:
 
@@ -34,6 +40,20 @@ Rúbrica de suficiencia (decide "end" solo si se cumple):
    prosa (no en lista) lo aportado por researcher y por analyst.
 5. Si la solicitud es puramente factual sin ningún cálculo o análisis
    pedido, no delegues en analyst: usa solo researcher y luego "end".
+
+6. Valida la calidad, no solo la presencia de un aporte: researcher debe
+   aportar evidencia y fuente; analyst debe responder el análisis solicitado
+   con los datos recibidos. Si falta algo, devuelve una instrucción específica
+   al especialista responsable indicando qué falta y qué debe corregir.
+7. Si dos aportes se contradicen, pide verificar el dato contra la fuente al
+   researcher o repetir el cálculo al analyst. Conserva los aportes anteriores
+   para trazabilidad; usa la corrección solo si está sustentada. No resuelvas
+   un conflicto por mayoría ni por ser el último mensaje recibido.
+8. Incluye en la instrucción del analyst el fragmento o los datos concretos
+   que debe procesar, junto con su fuente cuando corresponda. No le pidas
+   consultar un historial al que no tiene acceso.
+9. Si no es posible resolver la falta de evidencia o el conflicto, finaliza
+   explicando la limitación; no presentes como validado un resultado incierto.
 
 Responde SIEMPRE con el JSON pedido, sin texto adicional fuera de él.
 """
@@ -103,6 +123,47 @@ def synthesize_fallback(contributions: list[AgentContribution]) -> str:
     )
 
 
+async def _decide(
+    model: SupervisorChatModel, base_messages: list[BaseMessage]
+) -> SupervisorDecision:
+    """Reintenta hasta tres veces una decisión que incumple el esquema.
+
+    Cada intento conserva la solicitud y los aportes originales. Los errores
+    de transporte siguen a cargo del cliente; aquí solo se corrige el formato.
+    """
+
+    messages = list(base_messages)
+    last_error: OutputParserException | None = None
+
+    for attempt in range(1, _MAX_DECISION_ATTEMPTS + 1):
+        response = await model.ainvoke(messages)
+        raw_content = str(response.content)
+        try:
+            return _PARSER.parse(raw_content)
+        except OutputParserException as error:
+            last_error = error
+            logger.warning(
+                "Supervisor: salida no parseable en el intento %s/%s",
+                attempt,
+                _MAX_DECISION_ATTEMPTS,
+            )
+            messages = [
+                *base_messages,
+                HumanMessage(
+                    content=(
+                        "Tu respuesta anterior no era JSON válido según el "
+                        "formato pedido. Respondé ÚNICAMENTE con el objeto "
+                        "JSON, sin ningún texto antes o después."
+                    )
+                ),
+            ]
+
+    raise RuntimeError(
+        "El Supervisor no devolvió una decisión JSON válida tras "
+        f"{_MAX_DECISION_ATTEMPTS} intentos"
+    ) from last_error
+
+
 def build_supervisor_node(
     model: SupervisorChatModel, *, max_steps: int
 ) -> Callable[[OrchestratorState], Awaitable[dict[str, Any]]]:
@@ -128,13 +189,13 @@ def build_supervisor_node(
             contributions=format_contributions(contributions),
             format_instructions=_PARSER.get_format_instructions(),
         )
-        response = await model.ainvoke(
+        decision = await _decide(
+            model,
             [
                 SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT),
                 HumanMessage(content=prompt),
-            ]
+            ],
         )
-        decision = _PARSER.parse(str(response.content))
 
         update: dict[str, Any] = {
             "next_agent": decision.next,
